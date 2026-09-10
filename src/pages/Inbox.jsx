@@ -25,6 +25,27 @@ export default function Inbox() {
   const [sending, setSending] = React.useState(false);
   const [aiState, setAiState] = React.useState(null);
   const [realtimeStatus, setRealtimeStatus] = React.useState("live");
+  const [automationSettings, setAutomationSettings] = React.useState(null);
+
+  // Keep a ref of the fans map so async callbacks (realtime, ensureFan) can
+  // check membership without stale-closure issues.
+  const fansRef = React.useRef({});
+  React.useEffect(() => { fansRef.current = fans; }, [fans]);
+
+  // Lazily fetch a fan record that isn't in the local map yet (e.g. a fan
+  // created by a webhook after initial load, or one beyond the initial
+  // page). Prevents "Unknown / @unknown" when Fanvue actually has identity.
+  const ensureFan = React.useCallback(async (fanId) => {
+    if (!fanId) return;
+    if (fansRef.current[fanId]) return;
+    fansRef.current = { ...fansRef.current, [fanId]: { _loading: true } };
+    try {
+      const fan = await base44.entities.Fan.get(fanId);
+      setFans((prev) => ({ ...prev, [fanId]: fan }));
+    } catch (e) {
+      // leave placeholder so we don't hammer the API on every render
+    }
+  }, []);
 
   // Load initial data
   React.useEffect(() => {
@@ -34,12 +55,13 @@ export default function Inbox() {
   const loadInitialData = async () => {
     try {
       setLoadingConvos(true);
-      const [convos, fanList, creators, connections, personas] = await Promise.all([
+      const [convos, fanList, creators, connections, personas, settingsList] = await Promise.all([
         base44.entities.Conversation.list("-last_message_at", 100),
-        base44.entities.Fan.list("-created_date", 200),
+        base44.entities.Fan.list("-created_date", 1000),
         base44.entities.CreatorProfile.list("-created_date", 10),
         base44.entities.FanvueConnection.list("-created_date", 10),
         base44.entities.PersonaProfile.list("-created_date", 20),
+        base44.entities.AutomationSettings.list("-created_date", 20),
       ]);
 
       const fanMap = {};
@@ -51,6 +73,7 @@ export default function Inbox() {
       setCreator(activeCreator);
       setConnection(connections.find((c) => c.creator_profile_id === activeCreator?.id) || null);
       setPersona(personas.find((p) => p.creator_profile_id === activeCreator?.id && p.active) || null);
+      setAutomationSettings(settingsList.find((s) => s.creator_profile_id === activeCreator?.id) || null);
 
       if (convos.length > 0) setSelectedId(convos[0].id);
     } catch (err) {
@@ -85,6 +108,10 @@ export default function Inbox() {
             }
             return [event.data, ...prev];
           });
+          // Fetch the fan for any conversation whose fan isn't loaded yet
+          // (covers brand-new webhook-created fans and fans beyond the
+          // initial page — both previously rendered as "Unknown").
+          if (event.data?.fan_id) ensureFan(event.data.fan_id);
         }
       });
       setRealtimeStatus("live");
@@ -93,10 +120,19 @@ export default function Inbox() {
       setRealtimeStatus("reconnecting");
     }
 
-    // 3-second polling fallback
+    // 3-second polling fallback — reconciles BOTH the conversation list AND
+    // new messages in the currently open thread (incremental, dedup by id).
+    // This is the safety net for when the live subscription misses a
+    // service-role-created record (common for webhook-ingested messages).
     const interval = setInterval(async () => {
       try {
-        const updated = await base44.entities.Conversation.list("-updated_date", 50);
+        const [updated, recentMsgs] = await Promise.all([
+          base44.entities.Conversation.list("-updated_date", 50),
+          selectedId
+            ? base44.entities.Message.filter({ conversation_id: selectedId }, "created_date", 100)
+            : Promise.resolve(null),
+        ]);
+
         setConversations((prev) => {
           const map = new Map(prev.map((c) => [c.id, c]));
           let changed = false;
@@ -112,6 +148,22 @@ export default function Inbox() {
             (a, b) => new Date(b.last_message_at || b.updated_date) - new Date(a.last_message_at || a.updated_date)
           );
         });
+
+        // Merge any new messages into the open thread (dedup by id)
+        if (recentMsgs && recentMsgs.length > 0) {
+          setMessages((prev) => {
+            const map = new Map(prev.map((m) => [m.id, m]));
+            let added = false;
+            recentMsgs.forEach((m) => {
+              if (!map.has(m.id)) { map.set(m.id, m); added = true; }
+            });
+            if (!added) return prev;
+            return Array.from(map.values()).sort(
+              (a, b) => new Date(a.created_date) - new Date(b.created_date)
+            );
+          });
+        }
+
         setRealtimeStatus("live");
       } catch (err) {
         setRealtimeStatus("reconnecting");
@@ -131,6 +183,11 @@ export default function Inbox() {
     loadMessages(selectedId);
     loadMemories(selectedId);
   }, [selectedId]);
+
+  // Always make sure the selected conversation's fan is in the local map
+  React.useEffect(() => {
+    if (selectedConversation?.fan_id) ensureFan(selectedConversation.fan_id);
+  }, [selectedConversation?.fan_id]);
 
   const loadMessages = async (convId) => {
     try {
@@ -431,6 +488,7 @@ export default function Inbox() {
             generating={generating}
             sending={sending}
             loading={loadingMessages}
+            ppvDefaultCents={automationSettings?.default_ppv_cents || 1200}
           />
           <Inspector
             fan={selectedFan}

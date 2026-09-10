@@ -1,6 +1,9 @@
 import React from "react";
 import { Paperclip, Lock, Sparkles, Send, RefreshCw, Check, DollarSign } from "lucide-react";
 
+// Fanvue enforces a minimum PPV price of 300 cents ($3.00).
+const PPV_MIN_CENTS = 300;
+
 export default function MessageComposer({
   value,
   onChange,
@@ -13,9 +16,13 @@ export default function MessageComposer({
   onClearDraft,
   generating,
   sending,
+  ppvDefaultCents = 1200,
 }) {
   const [ppvMode, setPpvMode] = React.useState(false);
   const [ppvAmount, setPpvAmount] = React.useState("");
+
+  const ppvCents = ppvMode && ppvAmount ? Math.round(parseFloat(ppvAmount) * 100) : null;
+  const ppvValid = !ppvMode || (ppvCents != null && !isNaN(ppvCents) && ppvCents >= PPV_MIN_CENTS);
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -26,9 +33,21 @@ export default function MessageComposer({
 
   const handleSend = () => {
     if (!value.trim() || sending) return;
-    onSend({ ppvCents: ppvMode && ppvAmount ? parseInt(ppvAmount) * 100 : null });
+    if (!ppvValid) return;
+    onSend({ ppvCents: ppvMode ? ppvCents : null });
     setPpvMode(false);
     setPpvAmount("");
+  };
+
+  const togglePpv = () => {
+    setPpvMode((prev) => {
+      const next = !prev;
+      // Initialize from the creator's configured PPV default on entry
+      if (next && !ppvAmount) {
+        setPpvAmount(((ppvDefaultCents || 1200) / 100).toFixed(2));
+      }
+      return next;
+    });
   };
 
   return (
@@ -93,12 +112,17 @@ export default function MessageComposer({
             <DollarSign className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               type="number"
+              min="3"
+              step="0.01"
               value={ppvAmount}
               onChange={(e) => setPpvAmount(e.target.value)}
-              placeholder="0.00"
+              placeholder="3.00"
               className="w-24 rounded-md border border-input bg-background py-1 pl-7 pr-2 text-sm focus:border-ring focus:outline-none"
             />
           </div>
+          {ppvAmount && !ppvValid && (
+            <span className="text-xs text-destructive">Min $3.00</span>
+          )}
           <button
             onClick={() => setPpvMode(false)}
             className="text-xs text-muted-foreground hover:text-foreground"
@@ -111,13 +135,15 @@ export default function MessageComposer({
       {/* Composer */}
       <div className="flex items-end gap-2 px-4 py-3">
         <button
+          type="button"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
           title="Attach media"
         >
           <Paperclip className="h-4 w-4" />
         </button>
         <button
-          onClick={() => setPpvMode(!ppvMode)}
+          type="button"
+          onClick={togglePpv}
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md hover:bg-accent ${
             ppvMode ? "text-warning" : "text-muted-foreground hover:text-foreground"
           }`}
@@ -126,6 +152,7 @@ export default function MessageComposer({
           <Lock className="h-4 w-4" />
         </button>
         <button
+          type="button"
           onClick={onGenerateDraft}
           disabled={generating}
           className="flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
@@ -146,8 +173,9 @@ export default function MessageComposer({
         />
 
         <button
+          type="button"
           onClick={handleSend}
-          disabled={!value.trim() || sending}
+          disabled={!value.trim() || sending || !ppvValid}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
           title="Send message"
         >

@@ -37,6 +37,10 @@
     "max_ppv_cents": {
       "type": "integer",
       "default": 1000
+    },
+    "default_ppv_cents": {
+      "type": "integer",
+      "default": 1200
     }
   },
   "required": [

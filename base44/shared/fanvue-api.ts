@@ -88,6 +88,20 @@ export async function getVaultMedia(accessToken, folderId = null, page = 1, size
   return apiCall(`/vault/media?${params}`, accessToken);
 }
 
+/**
+ * Resolve a single fan's identity (displayName, handle, nickname, avatarUrl)
+ * via the chats list filtered by the fan's user UUID. Used to hydrate fans
+ * when a webhook event omits display_name/handle (Fanvue omits rather than
+ * nulls), and by the identity backfill for existing "Unknown" records.
+ * Returns the `user` object or null.
+ */
+export async function getChatForFan(accessToken, fanUuid) {
+  const params = new URLSearchParams({ size: "1" });
+  params.set("userUuids", fanUuid);
+  const res = await apiCall(`/chats?${params}`, accessToken);
+  return res?.data?.[0]?.user || null;
+}
+
 export async function exchangeCodeForTokens(code, redirectUri, codeVerifier) {
   const res = await fetch(TOKEN_URL, {
     method: "POST",

@@ -28,6 +28,7 @@ export default function ChatThread({
   generating,
   sending,
   loading,
+  ppvDefaultCents,
 }) {
   const scrollRef = React.useRef(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -168,6 +169,7 @@ export default function ChatThread({
         onClearDraft={onClearDraft}
         generating={generating}
         sending={sending}
+        ppvDefaultCents={ppvDefaultCents}
       />
     </div>
   );
