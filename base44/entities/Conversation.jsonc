@@ -11,6 +11,9 @@
     "fan_id": {
       "type": "string"
     },
+    "external_chat_uuid": {
+      "type": "string"
+    },
     "status": {
       "type": "string",
       "enum": [
