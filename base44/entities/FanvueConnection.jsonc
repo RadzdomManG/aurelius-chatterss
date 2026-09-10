@@ -57,6 +57,12 @@
     },
     "sync_progress": {
       "type": "object"
+    },
+    "webhook_subscription_id": {
+      "type": "string"
+    },
+    "encrypted_webhook_secret": {
+      "type": "string"
     }
   },
   "required": [
