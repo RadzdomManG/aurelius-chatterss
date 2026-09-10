@@ -171,12 +171,14 @@ Generate your reply as the creator.`;
     // Save memory updates
     if (aiResult.memory_updates && aiResult.memory_updates.length > 0) {
       for (const update of aiResult.memory_updates) {
-        if (update.key && update.value) {
+        const key = update.key != null ? String(update.key).trim() : "";
+        const value = update.value != null ? String(update.value).trim() : "";
+        if (key && value) {
           await base44.asServiceRole.entities.FanMemory.create({
             creator_profile_id: creatorProfileId,
             fan_id: conversation.fan_id,
-            memory_key: update.key,
-            memory_value: update.value,
+            memory_key: key,
+            memory_value: value,
             source_message_uuid: triggerMessageUuid || lastFanMessage.external_uuid || null,
           });
         }
