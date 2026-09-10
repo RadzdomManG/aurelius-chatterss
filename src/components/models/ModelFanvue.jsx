@@ -1,7 +1,7 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
-import { RefreshCw, Trash2, ShieldCheck, ShieldAlert, KeyRound, Download } from "lucide-react";
+import { RefreshCw, Trash2, ShieldCheck, ShieldAlert, KeyRound, Download, MessageSquare } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { initiateFanvueOAuth } from "@/lib/fanvue-oauth";
 
@@ -20,16 +20,18 @@ export default function ModelFanvue({ creator, connection, onSaved }) {
     }
   };
 
-  const handleSync = async () => {
+  const handleSync = async (opts = {}) => {
     if (!creator?.id) return;
     try {
       setSyncing(true);
       const res = await base44.functions.invoke("fanvue-sync", {
         creatorProfileId: creator.id,
-        fullSync: true,
+        fullSync: false,
+        ...opts,
       });
       if (res.data?.success) {
-        toast.success(`Synced ${res.data.totalChats} chats, ${res.data.totalMessages} new messages`);
+        const label = opts.messagesOnly ? "messages" : "conversations";
+        toast.success(`Synced ${res.data.totalChats} chats, ${res.data.totalMessages} new ${label === "messages" ? "messages" : "chats"}`);
         onSaved();
       } else {
         toast.error(res.data?.error || "Sync failed");
@@ -110,10 +112,16 @@ export default function ModelFanvue({ creator, connection, onSaved }) {
 
       <div className="flex gap-3">
         {connection?.status === "connected" && (
-          <button onClick={handleSync} disabled={syncing || acting}
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
-            <Download className={`h-4 w-4 ${syncing ? "animate-bounce" : ""}`} /> {syncing ? "Syncing..." : "Sync Now"}
-          </button>
+          <>
+            <button onClick={() => handleSync()} disabled={syncing || acting}
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+              <Download className={`h-4 w-4 ${syncing ? "animate-bounce" : ""}`} /> {syncing ? "Syncing..." : "Sync Conversations"}
+            </button>
+            <button onClick={() => handleSync({ messagesOnly: true, fullSync: true })} disabled={syncing || acting}
+              className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50">
+              <MessageSquare className={`h-4 w-4 ${syncing ? "animate-bounce" : ""}`} /> Sync Messages
+            </button>
+          </>
         )}
         <button onClick={handleReconnect} disabled={acting}
           className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50">

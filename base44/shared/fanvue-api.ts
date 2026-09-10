@@ -12,21 +12,45 @@ function basicAuthHeader() {
   return "Basic " + btoa(`${clientId}:${clientSecret}`);
 }
 
-export async function apiCall(path, accessToken, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "X-Fanvue-API-Version": API_VERSION,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-  if (!res.ok) {
-    const errorBody = await res.text();
-    throw new Error(`Fanvue API ${res.status} on ${path}: ${errorBody}`);
+export function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function apiCall(path, accessToken, options = {}, maxRetries = 4) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "X-Fanvue-API-Version": API_VERSION,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+
+    const isRateLimited = res.status === 429 || res.status === 425;
+
+    if (isRateLimited && attempt < maxRetries) {
+      // Exponential backoff: 2s, 4s, 8s, 16s
+      const waitMs = Math.pow(2, attempt + 1) * 1000;
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!res.ok) {
+      const errorBody = await res.text();
+      // Also retry on rate limit errors returned in the body with other status codes
+      const bodyIsRateLimit = /rate.?limit|too many requests/i.test(errorBody);
+      if (bodyIsRateLimit && attempt < maxRetries) {
+        const waitMs = Math.pow(2, attempt + 1) * 1000;
+        await sleep(waitMs);
+        continue;
+      }
+      throw new Error(`Fanvue API ${res.status} on ${path}: ${errorBody}`);
+    }
+
+    return res.json();
   }
-  return res.json();
 }
 
 export async function getMe(accessToken) {

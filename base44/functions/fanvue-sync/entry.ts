@@ -1,6 +1,5 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
-import { secrets } from "base44:runtime";
-import { getValidAccessToken, getChats, getMessages, getMe } from "../../shared/fanvue-api.ts";
+import { getValidAccessToken, getChats, getMessages, getMe, sleep } from "../../shared/fanvue-api.ts";
 
 export default async function(req) {
   let parsedBody = {};
@@ -8,15 +7,15 @@ export default async function(req) {
     parsedBody = await req.json();
   } catch (e) {}
 
+  let connection;
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { creatorProfileId, fullSync } = parsedBody;
+    const { creatorProfileId, fullSync, messagesOnly, maxChatsWithMessages } = parsedBody;
 
     // Find the FanvueConnection for this creator
-    let connection;
     if (creatorProfileId) {
       const conns = await base44.entities.FanvueConnection.filter(
         { creator_profile_id: creatorProfileId },
@@ -37,111 +36,201 @@ export default async function(req) {
       return Response.json({ error: "No connected Fanvue account found" }, { status: 404 });
     }
 
-    // Update sync status
+    const creatorProfileIdFinal = connection.creator_profile_id;
+
     await base44.asServiceRole.entities.FanvueConnection.update(connection.id, {
       sync_status: "syncing",
     });
 
     await base44.asServiceRole.entities.ActivityLog.create({
-      creator_profile_id: connection.creator_profile_id,
+      creator_profile_id: creatorProfileIdFinal,
       event_type: "sync.started",
       status: "info",
-      message: fullSync ? "Full historical sync started" : "Incremental sync started",
+      message: messagesOnly ? "Message sync started" : fullSync ? "Full sync started" : "Incremental sync started",
     });
 
-    // Get a valid access token (refresh if needed)
     const accessToken = await getValidAccessToken(connection, base44);
-
-    // Get the creator's own UUID
     const me = await getMe(accessToken);
     const creatorUuid = me.uuid;
 
-    // Sync chats (conversations + fans)
-    let page = 1;
-    let hasMore = true;
+    // Preload existing data
+    const existingFans = await base44.asServiceRole.entities.Fan.filter(
+      { creator_profile_id: creatorProfileIdFinal },
+      "-created_date",
+      500
+    );
+    const fanByUuid = new Map();
+    existingFans.forEach((f) => fanByUuid.set(f.external_uuid, f));
+
+    const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
+      { creator_profile_id: creatorProfileIdFinal },
+      "-created_date",
+      500
+    );
+    const convoByFanId = new Map();
+    existingConvos.forEach((c) => convoByFanId.set(c.fan_id, c));
+
+    const existingMsgs = await base44.asServiceRole.entities.Message.filter(
+      { creator_profile_id: creatorProfileIdFinal },
+      "-created_date",
+      500
+    );
+    const msgUuidSet = new Set();
+    existingMsgs.forEach((m) => { if (m.external_uuid) msgUuidSet.add(m.external_uuid); });
+
+    // === Phase 1: Sync chats -> fans + conversations (fast, no message fetching) ===
     let totalChats = 0;
     let totalMessages = 0;
+    const fansToCreate = [];
+    const fansToUpdate = [];
+    const convosToCreate = [];
+    const convosToUpdate = [];
+    const chatFanUuids = []; // track order for message phase
 
-    while (hasMore) {
-      const chatsRes = await getChats(accessToken, page, 50);
-      const chats = chatsRes.data || [];
+    if (!messagesOnly) {
+      let page = 1;
+      let hasMore = true;
 
-      for (const chat of chats) {
-        const fanUuid = chat.user?.uuid;
-        if (!fanUuid) continue;
+      while (hasMore) {
+        const chatsRes = await getChats(accessToken, page, 50);
+        const chats = chatsRes.data || [];
 
-        // Find or create Fan
-        let fan;
-        const existingFans = await base44.asServiceRole.entities.Fan.filter(
-          { creator_profile_id: connection.creator_profile_id, external_uuid: fanUuid },
-          "-created_date",
-          1
-        );
-        if (existingFans[0]) {
-          fan = existingFans[0];
-          if (chat.user?.displayName && chat.user.displayName !== fan.display_name) {
-            await base44.asServiceRole.entities.Fan.update(fan.id, {
-              display_name: chat.user.displayName,
-              handle: chat.user?.handle || fan.handle,
-            });
+        for (const chat of chats) {
+          const fanUuid = chat.user?.uuid;
+          if (!fanUuid) continue;
+
+          let fan = fanByUuid.get(fanUuid);
+          if (fan) {
+            if (chat.user?.displayName && chat.user.displayName !== fan.display_name) {
+              fansToUpdate.push({
+                id: fan.id,
+                display_name: chat.user.displayName,
+                handle: chat.user?.handle || fan.handle,
+              });
+              fan.display_name = chat.user.displayName;
+            }
+          } else {
+            fan = {
+              creator_profile_id: creatorProfileIdFinal,
+              external_uuid: fanUuid,
+              display_name: chat.user?.displayName || chat.user?.handle || "Unknown Fan",
+              handle: chat.user?.handle || "",
+              subscription_status: null,
+            };
+            fansToCreate.push(fan);
+            fanByUuid.set(fanUuid, fan);
           }
-        } else {
-          fan = await base44.asServiceRole.entities.Fan.create({
-            creator_profile_id: connection.creator_profile_id,
-            external_uuid: fanUuid,
-            display_name: chat.user?.displayName || chat.user?.handle || "Unknown Fan",
-            handle: chat.user?.handle || "",
-            subscription_status: null,
-          });
+
+          // Queue conversation
+          if (fan.id) {
+            const existingConvo = convoByFanId.get(fan.id);
+            if (existingConvo) {
+              convosToUpdate.push({
+                id: existingConvo.id,
+                status: "active",
+                unread_count: chat.unreadMessagesCount || 0,
+                last_message_preview: chat.lastMessage?.text || existingConvo.last_message_preview,
+                last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
+              });
+            }
+          }
+
+          chatFanUuids.push(fanUuid);
+          totalChats++;
         }
 
-        // Find or create Conversation
-        let conversation;
-        const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
-          { creator_profile_id: connection.creator_profile_id, fan_id: fan.id },
-          "-created_date",
-          1
-        );
-        if (existingConvos[0]) {
-          conversation = existingConvos[0];
-          await base44.asServiceRole.entities.Conversation.update(conversation.id, {
-            status: "active",
-            unread_count: chat.unreadMessagesCount || 0,
-            last_message_preview: chat.lastMessage?.text || conversation.last_message_preview,
-            last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
-          });
-        } else {
-          conversation = await base44.asServiceRole.entities.Conversation.create({
-            creator_profile_id: connection.creator_profile_id,
-            fan_id: fan.id,
-            external_chat_uuid: fanUuid,
-            status: "active",
-            unread_count: chat.unreadMessagesCount || 0,
-            last_message_preview: chat.lastMessage?.text || "",
-            last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
-          });
+        hasMore = chatsRes.pagination?.hasMore || false;
+        page++;
+        if (hasMore) await sleep(400);
+      }
+
+      // Batch create new fans
+      if (fansToCreate.length > 0) {
+        const created = await base44.asServiceRole.entities.Fan.bulkCreate(fansToCreate);
+        created.forEach((f) => fanByUuid.set(f.external_uuid, f));
+      }
+
+      // Batch update fans
+      if (fansToUpdate.length > 0) {
+        await base44.asServiceRole.entities.Fan.bulkUpdate(fansToUpdate);
+      }
+
+      // Create conversations for newly created fans
+      // Re-fetch chats page 1 to build convos (now all fans have IDs)
+      page = 1;
+      hasMore = true;
+      while (hasMore) {
+        const chatsRes = await getChats(accessToken, page, 50);
+        const chats = chatsRes.data || [];
+
+        for (const chat of chats) {
+          const fanUuid = chat.user?.uuid;
+          if (!fanUuid) continue;
+          const fan = fanByUuid.get(fanUuid);
+          if (!fan || !fan.id) continue;
+
+          if (!convoByFanId.has(fan.id)) {
+            convosToCreate.push({
+              creator_profile_id: creatorProfileIdFinal,
+              fan_id: fan.id,
+              external_chat_uuid: fanUuid,
+              status: "active",
+              unread_count: chat.unreadMessagesCount || 0,
+              last_message_preview: chat.lastMessage?.text || "",
+              last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
+            });
+            // Temp marker; will be replaced after bulkCreate
+            convoByFanId.set(fan.id, { fan_id: fan.id, _pending: true });
+          }
         }
 
-        totalChats++;
+        hasMore = chatsRes.pagination?.hasMore || false;
+        page++;
+        if (hasMore) await sleep(400);
+      }
 
-        // Sync messages for this chat
-        if (fullSync || conversation.last_message_at === null) {
+      if (convosToCreate.length > 0) {
+        const createdConvos = await base44.asServiceRole.entities.Conversation.bulkCreate(convosToCreate);
+        createdConvos.forEach((c) => convoByFanId.set(c.fan_id, c));
+      }
+
+      // Apply conversation updates
+      if (convosToUpdate.length > 0) {
+        await base44.asServiceRole.entities.Conversation.bulkUpdate(convosToUpdate);
+      }
+    } else {
+      // messagesOnly mode: populate chatFanUuids from existing conversations
+      existingConvos.forEach((c) => {
+        const fan = existingFans.find((f) => f.id === c.fan_id);
+        if (fan?.external_uuid) chatFanUuids.push(fan.external_uuid);
+      });
+    }
+
+    // === Phase 2: Sync messages (rate-limited, optional) ===
+    if (fullSync || messagesOnly) {
+      const maxMessages = maxChatsWithMessages || 20; // cap to avoid timeout
+      const messagesToCreate = [];
+      let processed = 0;
+
+      for (const fanUuid of chatFanUuids) {
+        if (processed >= maxMessages) break;
+
+        const fan = fanByUuid.get(fanUuid);
+        if (!fan || !fan.id) { processed++; continue; }
+        const conversation = convoByFanId.get(fan.id);
+        if (!conversation || !conversation.id) { processed++; continue; }
+
+        await sleep(400);
+        try {
           const msgsRes = await getMessages(accessToken, fanUuid, 50);
           const messages = msgsRes.data || [];
 
           for (const msg of messages) {
-            // Check if message already exists (by external_uuid)
-            const existingMsgs = await base44.asServiceRole.entities.Message.filter(
-              { external_uuid: msg.uuid },
-              "-created_date",
-              1
-            );
-            if (existingMsgs[0]) continue;
+            if (msgUuidSet.has(msg.uuid)) continue;
 
             const senderType = msg.sender?.uuid === creatorUuid ? "creator" : "fan";
-
-            await base44.asServiceRole.entities.Message.create({
-              creator_profile_id: connection.creator_profile_id,
+            messagesToCreate.push({
+              creator_profile_id: creatorProfileIdFinal,
               conversation_id: conversation.id,
               external_uuid: msg.uuid,
               sender_type: senderType,
@@ -151,34 +240,32 @@ export default async function(req) {
               source: "sync",
               fanvue_created_at: msg.sentAt || null,
             });
-
+            msgUuidSet.add(msg.uuid);
             totalMessages++;
           }
-
-          // Update conversation last_message_at
-          if (messages.length > 0) {
-            const latestMsg = messages[0];
-            await base44.asServiceRole.entities.Conversation.update(conversation.id, {
-              last_message_at: latestMsg.sentAt || new Date().toISOString(),
-              last_message_preview: latestMsg.text || conversation.last_message_preview,
-              last_sender_type: latestMsg.sender?.uuid === creatorUuid ? "creator" : "fan",
-            });
-          }
+        } catch (msgErr) {
+          console.error(`[sync] messages failed for ${fanUuid}:`, msgErr.message);
         }
+        processed++;
       }
 
-      hasMore = chatsRes.pagination?.hasMore || false;
-      page++;
+      // Batch create messages in chunks
+      if (messagesToCreate.length > 0) {
+        const chunkSize = 100;
+        for (let i = 0; i < messagesToCreate.length; i += chunkSize) {
+          await base44.asServiceRole.entities.Message.bulkCreate(messagesToCreate.slice(i, i + chunkSize));
+        }
+      }
     }
 
-    // Update sync status to completed
+    // Update sync status
     await base44.asServiceRole.entities.FanvueConnection.update(connection.id, {
       sync_status: "completed",
       last_sync_at: new Date().toISOString(),
     });
 
     await base44.asServiceRole.entities.ActivityLog.create({
-      creator_profile_id: connection.creator_profile_id,
+      creator_profile_id: creatorProfileIdFinal,
       event_type: "sync.completed",
       status: "success",
       message: `Sync completed: ${totalChats} chats, ${totalMessages} new messages`,
@@ -191,27 +278,19 @@ export default async function(req) {
       totalMessages,
     });
   } catch (error) {
-    // Mark sync as errored
     try {
       const base44 = createClientFromRequest(req);
-      if (parsedBody.creatorProfileId) {
-        const conns = await base44.asServiceRole.entities.FanvueConnection.filter(
-          { creator_profile_id: parsedBody.creatorProfileId },
-          "-created_date",
-          1
-        );
-        if (conns[0]) {
-          await base44.asServiceRole.entities.FanvueConnection.update(conns[0].id, {
-            sync_status: "error",
-          });
-        }
+      if (connection) {
+        await base44.asServiceRole.entities.FanvueConnection.update(connection.id, {
+          sync_status: "error",
+        });
+        await base44.asServiceRole.entities.ActivityLog.create({
+          creator_profile_id: connection.creator_profile_id,
+          event_type: "sync.error",
+          status: "error",
+          message: error.message,
+        });
       }
-      await base44.asServiceRole.entities.ActivityLog.create({
-        creator_profile_id: parsedBody.creatorProfileId,
-        event_type: "sync.error",
-        status: "error",
-        message: error.message,
-      });
     } catch (e) {}
 
     return Response.json({ error: error.message }, { status: 500 });
