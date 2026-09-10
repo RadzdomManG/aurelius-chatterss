@@ -170,6 +170,7 @@ export default function ChatThread({
         generating={generating}
         sending={sending}
         ppvDefaultCents={ppvDefaultCents}
+        creatorProfileId={conversation?.creator_profile_id}
       />
     </div>
   );

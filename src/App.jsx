@@ -20,6 +20,7 @@ import Media from '@/pages/Media';
 import Playground from '@/pages/Playground';
 import Analytics from '@/pages/Analytics';
 import Activity from '@/pages/Activity';
+import Diagnostics from '@/pages/Diagnostics';
 import Settings from '@/pages/Settings';
 import FanvueCallback from '@/pages/FanvueCallback';
 import CalendarPage from '@/pages/Calendar';
@@ -64,6 +65,7 @@ const AuthenticatedApp = () => {
           <Route path="/playground" element={<Playground />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/diagnostics" element={<Diagnostics />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Route>

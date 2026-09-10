@@ -243,8 +243,8 @@ export default function Inbox() {
   const selectedConversation = conversations.find((c) => c.id === selectedId);
   const selectedFan = selectedConversation ? fans[selectedConversation.fan_id] : null;
 
-  const handleSend = async ({ ppvCents }) => {
-    if (!composerValue.trim() || !selectedId) return;
+  const handleSend = async ({ ppvCents, mediaUuids, mediaPreviewUuid } = {}) => {
+    if ((!composerValue.trim() && !mediaUuids?.length) || !selectedId) return;
     const body = composerValue.trim();
     setComposerValue("");
     setDraft(null);
@@ -258,6 +258,7 @@ export default function Inbox() {
         conversation_id: selectedId,
         sender_type: "creator",
         body,
+        media: mediaUuids || null,
         ppv_cents: ppvCents || null,
         source: "manual",
       });
@@ -282,6 +283,8 @@ export default function Inbox() {
           conversationId: selectedId,
           body,
           ppvCents: ppvCents || null,
+          mediaUuids: mediaUuids || null,
+          mediaPreviewUuid: mediaPreviewUuid || null,
         });
         toast.success("Message sent to Fanvue");
       } catch (fnErr) {

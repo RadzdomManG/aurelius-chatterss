@@ -68,9 +68,12 @@ export async function getMessages(accessToken, userUuid, size = 50) {
   return apiCall(`/chats/${userUuid}/messages?${params}`, accessToken);
 }
 
-export async function sendFanvueMessage(accessToken, userUuid, text, price = null) {
-  const body = { text };
+export async function sendFanvueMessage(accessToken, userUuid, text, price = null, media = null) {
+  const body = {};
+  if (text) body.text = text;
   if (price) body.price = price;
+  if (media?.mediaUuids?.length) body.mediaUuids = media.mediaUuids;
+  if (media?.mediaPreviewUuid) body.mediaPreviewUuid = media.mediaPreviewUuid;
   return apiCall(`/chats/${userUuid}/message`, accessToken, {
     method: "POST",
     body: JSON.stringify(body),

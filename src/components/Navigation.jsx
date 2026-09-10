@@ -11,6 +11,7 @@ import {
   Settings,
   Calendar,
   CircleDot,
+  Stethoscope,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import LiveActivityBell from "@/components/shared/LiveActivityBell";
@@ -24,6 +25,7 @@ const navItems = [
   { to: "/playground", label: "Playground", icon: FlaskConical },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/activity", label: "Activity", icon: Activity },
+  { to: "/diagnostics", label: "Diagnostics", icon: Stethoscope },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

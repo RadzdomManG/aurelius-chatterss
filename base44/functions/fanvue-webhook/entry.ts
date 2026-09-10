@@ -5,6 +5,45 @@ import { getValidAccessToken, getChatForFan } from "../../shared/fanvue-api.ts";
 
 const TOLERANCE_SECONDS = 300;
 
+/**
+ * Read a header value case-insensitively from a Request's Headers object.
+ * Fanvue documents `X-Fanvue-Signature`, but proxies/runtimes occasionally
+ * alter header casing — this guards against that.
+ */
+function getHeader(req, name) {
+  try {
+    const direct = req.headers?.get?.(name);
+    if (direct) return direct;
+  } catch (e) {}
+  try {
+    const entries = Array.from(req.headers.entries?.() || []);
+    const found = entries.find(([k]) => k.toLowerCase() === name.toLowerCase());
+    if (found) return found[1];
+  } catch (e) {}
+  // Plain-object fallback
+  try {
+    const h = req.headers || {};
+    const keys = Object.keys(h);
+    const found = keys.find((k) => k.toLowerCase() === name.toLowerCase());
+    if (found) return h[found];
+  } catch (e) {}
+  return null;
+}
+
+/** Collect all header keys+values for diagnostic logging. */
+function collectHeaders(req) {
+  try {
+    const entries = Array.from(req.headers.entries?.() || []);
+    return entries.map(([k, v]) => `${k}=${(v || "").slice(0, 80)}`);
+  } catch (e) {
+    try {
+      return Object.keys(req.headers || {}).map((k) => `${k}=${String(req.headers[k] || "").slice(0, 80)}`);
+    } catch (e2) {
+      return ["<headers unreadable>"];
+    }
+  }
+}
+
 async function verifySignature(rawBody, signatureHeader, secret) {
   let timestamp, signature;
   for (const part of signatureHeader.split(",")) {
@@ -15,10 +54,12 @@ async function verifySignature(rawBody, signatureHeader, secret) {
     if (key === "t") timestamp = value;
     if (key === "v0") signature = value;
   }
-  if (!timestamp || !signature) return false;
+  if (!timestamp || !signature) return { ok: false, reason: "no t or v0 in header" };
 
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - parseInt(timestamp, 10)) > TOLERANCE_SECONDS) return false;
+  if (Math.abs(now - parseInt(timestamp, 10)) > TOLERANCE_SECONDS) {
+    return { ok: false, reason: "stale timestamp" };
+  }
 
   const signedPayload = `${timestamp}.${rawBody}`;
   const key = await crypto.subtle.importKey(
@@ -33,29 +74,19 @@ async function verifySignature(rawBody, signatureHeader, secret) {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 
-  if (expected.length !== signature.length) return false;
+  if (expected.length !== signature.length) return { ok: false, reason: "length mismatch" };
   let diff = 0;
   for (let i = 0; i < expected.length; i++) {
     diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
   }
-  return diff === 0;
+  return diff === 0 ? { ok: true } : { ok: false, reason: "hmac mismatch" };
 }
 
-/**
- * Normalize both the legacy flat `message.received` payload and the new
- * Standard-Webhooks `creator.message.received` envelope into one shape.
- * Fanvue omits optional fields rather than nulling them, so every field
- * is read defensively. Identity may be absent and is hydrated separately.
- */
 function normalizeMessageEvent(event, eventType) {
   const isNew = eventType === "creator.message.received";
-
   if (isNew) {
     const data = event.data || {};
-    // Only process inbound fan messages; ignore creator-sent echoes
-    // (they are handled by the outgoing sync path, not the AI path).
     if (data.sender && data.sender !== "fan") return null;
-
     const fan = data.fan || {};
     const creator = data.creator || {};
     return {
@@ -71,8 +102,6 @@ function normalizeMessageEvent(event, eventType) {
       ppvCents: data.price != null ? data.price : null,
     };
   }
-
-  // Legacy flat envelope (camelCase, sender/recipient objects)
   const msg = event.data || event.message || event;
   const sender = msg.sender || {};
   const recipient = msg.recipient || {};
@@ -91,12 +120,6 @@ function normalizeMessageEvent(event, eventType) {
   };
 }
 
-/**
- * When a webhook event omits the fan's display_name / handle (Fanvue omits
- * optional fields rather than nulling them), resolve the real identity from
- * the Fanvue chats API so we never persist "Unknown / @unknown" when Fanvue
- * actually has the data. Mutates the normalized object in place.
- */
 async function hydrateIdentityIfNeeded(base44, connection, normalized) {
   if (normalized.senderName || normalized.senderHandle) return;
   if (!normalized.senderUuid) return;
@@ -106,7 +129,7 @@ async function hydrateIdentityIfNeeded(base44, connection, normalized) {
     if (user) {
       normalized.senderName = user.displayName || user.handle || "";
       normalized.senderHandle = user.handle || "";
-      normalized.senderAvatar = user.avatarUrl || normalized.senderAvatar || "";
+      normalized.senderAvatar = user.avatar_url || user.avatarUrl || normalized.senderAvatar || "";
     }
   } catch (err) {
     console.error("[webhook] identity hydration failed:", err.message);
@@ -115,12 +138,10 @@ async function hydrateIdentityIfNeeded(base44, connection, normalized) {
 
 async function processMessageReceived(base44, event, eventType) {
   const normalized = normalizeMessageEvent(event, eventType);
-  if (!normalized) return; // null = not an inbound fan message
+  if (!normalized) return;
   const { msgUuid, msgText, sentAt, senderUuid, mediaUuids, ppvCents } = normalized;
-
   if (!senderUuid || !normalized.recipientUuid) return;
 
-  // Find the creator's FanvueConnection by the recipient UUID
   const connections = await base44.asServiceRole.entities.FanvueConnection.filter(
     { external_user_uuid: normalized.recipientUuid, status: "connected" },
     "-created_date",
@@ -130,15 +151,12 @@ async function processMessageReceived(base44, event, eventType) {
   if (!connection) return;
 
   const creatorProfileId = connection.creator_profile_id;
-
-  // Hydrate real identity if the webhook omitted it
   await hydrateIdentityIfNeeded(base44, connection, normalized);
 
   const senderName = normalized.senderName || "Unknown Fan";
   const senderHandle = normalized.senderHandle || "";
   const senderAvatar = normalized.senderAvatar || "";
 
-  // Find or create Fan (stable key: creator + Fanvue fan UUID — never duplicate)
   let fan;
   const existingFans = await base44.asServiceRole.entities.Fan.filter(
     { creator_profile_id: creatorProfileId, external_uuid: senderUuid },
@@ -151,9 +169,7 @@ async function processMessageReceived(base44, event, eventType) {
     if (senderName && senderName !== "Unknown Fan" && senderName !== fan.display_name) patch.display_name = senderName;
     if (senderHandle && senderHandle !== fan.handle) patch.handle = senderHandle;
     if (senderAvatar && senderAvatar !== fan.avatar_url) patch.avatar_url = senderAvatar;
-    if (Object.keys(patch).length > 0) {
-      await base44.asServiceRole.entities.Fan.update(fan.id, patch);
-    }
+    if (Object.keys(patch).length > 0) await base44.asServiceRole.entities.Fan.update(fan.id, patch);
   } else {
     fan = await base44.asServiceRole.entities.Fan.create({
       creator_profile_id: creatorProfileId,
@@ -164,7 +180,6 @@ async function processMessageReceived(base44, event, eventType) {
     });
   }
 
-  // Find or create Conversation (one per creator + fan)
   let conversation;
   const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
     { creator_profile_id: creatorProfileId, fan_id: fan.id },
@@ -182,17 +197,15 @@ async function processMessageReceived(base44, event, eventType) {
     });
   }
 
-  // Idempotency: dedupe by Fanvue message UUID (at-least-once delivery)
   if (msgUuid) {
     const existingMsgs = await base44.asServiceRole.entities.Message.filter(
       { external_uuid: msgUuid },
       "-created_date",
       1
     );
-    if (existingMsgs[0]) return; // Already processed
+    if (existingMsgs[0]) return;
   }
 
-  // Create the Message
   await base44.asServiceRole.entities.Message.create({
     creator_profile_id: creatorProfileId,
     conversation_id: conversation.id,
@@ -205,7 +218,6 @@ async function processMessageReceived(base44, event, eventType) {
     fanvue_created_at: sentAt,
   });
 
-  // Update conversation (this triggers realtime for the conversation list)
   await base44.asServiceRole.entities.Conversation.update(conversation.id, {
     status: "active",
     unread_count: (conversation.unread_count || 0) + 1,
@@ -223,7 +235,6 @@ async function processMessageReceived(base44, event, eventType) {
     metadata: { messageUuid: msgUuid, event: eventType, hydrated: !!(senderName && senderName !== "Unknown Fan") },
   });
 
-  // Trigger server-side AI processing asynchronously (auto-respond / draft)
   try {
     await processAIJob(base44, conversation.id, null, msgUuid);
   } catch (aiErr) {
@@ -234,62 +245,73 @@ async function processMessageReceived(base44, event, eventType) {
 const INBOUND_EVENTS = new Set(["message.received", "creator.message.received"]);
 
 export default async function (req) {
-  try {
-    const rawBody = await req.text();
-    const signatureHeader = req.headers.get("X-Fanvue-Signature");
-    const webhookSecret = secrets.get("FANVUE_WEBHOOK_SECRET");
+  const rawBody = await req.text();
+  const signatureHeader = getHeader(req, "X-Fanvue-Signature");
+  const webhookSecret = secrets.get("FANVUE_WEBHOOK_SECRET");
 
-    // Diagnostic: log EVERY raw request so we can tell whether Fanvue is
-    // reaching us at all (distinguishes "not registered" from "bad signature")
+  // Diagnostic: log EVERY raw request — event type, signature presence,
+  // and the full set of received header names — so we can confirm Fanvue is
+  // reaching us and see exactly which header carries the signature.
+  let eventTypeHint = "unknown";
+  try {
+    const parsed = JSON.parse(rawBody);
+    eventTypeHint = parsed.event || parsed.type || "unknown";
+  } catch (e) {}
+
+  const headerDump = collectHeaders(req);
+  try {
+    const diagBase44 = createClientFromRequest(req);
+    waitUntil(
+      diagBase44.asServiceRole.entities.ActivityLog.create({
+        event_type: "webhook.request",
+        status: signatureHeader ? "info" : "warning",
+        message: `Webhook ${eventTypeHint} — sig:${signatureHeader ? "present" : "MISSING"} body:${rawBody.length}b`,
+        metadata: {
+          eventType: eventTypeHint,
+          signaturePresent: !!signatureHeader,
+          bodyLength: rawBody.length,
+          headers: headerDump,
+          bodyPreview: rawBody.slice(0, 500),
+        },
+      })
+    );
+  } catch (e) {}
+
+  // Acknowledge connectivity for unsigned requests (e.g. Fanvue's Test button
+  // before the signing secret is wired, or probe requests) WITHOUT processing
+  // them — unverified payloads never create messages. Real signed events are
+  // verified and processed below.
+  if (!signatureHeader) {
+    return Response.json({ received: true, verified: false, reason: "no signature header" });
+  }
+  if (!webhookSecret) {
+    return Response.json({ error: "Webhook secret not configured" }, { status: 500 });
+  }
+
+  const verification = await verifySignature(rawBody, signatureHeader, webhookSecret);
+  if (!verification.ok) {
     try {
-      const diagBase44 = createClientFromRequest(req);
-      let eventTypeHint = "unknown";
-      try {
-        const parsed = JSON.parse(rawBody);
-        eventTypeHint = parsed.event || parsed.type || "unknown";
-      } catch (e) {}
+      const errBase44 = createClientFromRequest(req);
       waitUntil(
-        diagBase44.asServiceRole.entities.ActivityLog.create({
-          event_type: "webhook.request",
-          status: signatureHeader ? "info" : "warning",
-          message: `Raw webhook request — event: ${eventTypeHint}, signature: ${signatureHeader ? "present" : "missing"}, bodyLength: ${rawBody.length}`,
+        errBase44.asServiceRole.entities.ActivityLog.create({
+          event_type: "webhook.signature_failed",
+          status: "error",
+          message: `Signature verification failed: ${verification.reason}`,
+          metadata: { eventType: eventTypeHint, headers: headerDump },
         })
       );
     } catch (e) {}
+    return Response.json({ error: "Invalid signature", reason: verification.reason }, { status: 401 });
+  }
 
-    if (!signatureHeader) {
-      return Response.json({ error: "Missing signature header" }, { status: 401 });
-    }
-    if (!webhookSecret) {
-      return Response.json({ error: "Webhook secret not configured" }, { status: 500 });
-    }
-
-    const valid = await verifySignature(rawBody, signatureHeader, webhookSecret);
-    if (!valid) {
-      try {
-        const errBase44 = createClientFromRequest(req);
-        waitUntil(
-          errBase44.asServiceRole.entities.ActivityLog.create({
-            event_type: "webhook.signature_failed",
-            status: "error",
-            message: "Webhook signature verification failed",
-          })
-        );
-      } catch (e) {}
-      return Response.json({ error: "Invalid signature" }, { status: 401 });
-    }
-
+  try {
     const event = JSON.parse(rawBody);
     const eventType = event.event || event.type;
 
-    // Return 2xx IMMEDIATELY after verification; process asynchronously so
-    // Fanvue does not time out (10s) and retry, which would duplicate work.
     if (INBOUND_EVENTS.has(eventType)) {
       const base44 = createClientFromRequest(req);
       waitUntil(processMessageReceived(base44, event, eventType));
     } else {
-      // Return 2xx for unknown event types too — rejecting them counts as a
-      // failure and can walk the endpoint toward auto-disable.
       waitUntil(
         (async () => {
           try {
@@ -297,14 +319,14 @@ export default async function (req) {
             await b.asServiceRole.entities.ActivityLog.create({
               event_type: "webhook.ignored",
               status: "info",
-              message: `Ignored non-message event: ${eventType || "unknown"}`,
+              message: `Verified non-message event: ${eventType || "unknown"}`,
             });
           } catch (e) {}
         })()
       );
     }
 
-    return Response.json({ received: true, eventType });
+    return Response.json({ received: true, verified: true, eventType });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

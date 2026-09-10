@@ -13,10 +13,10 @@ export default async function(req) {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { conversationId, body: messageBody, ppvCents } = parsedBody;
+    const { conversationId, body: messageBody, ppvCents, mediaUuids, mediaPreviewUuid } = parsedBody;
 
-    if (!conversationId || !messageBody) {
-      return Response.json({ error: "conversationId and body are required" }, { status: 400 });
+    if (!conversationId || (!messageBody && !mediaUuids?.length)) {
+      return Response.json({ error: "conversationId and either body or mediaUuids are required" }, { status: 400 });
     }
 
     // Get the conversation
@@ -45,12 +45,16 @@ export default async function(req) {
     // Get a valid access token (refresh if needed)
     const accessToken = await getValidAccessToken(connection, base44);
 
-    // Send the message via Fanvue API
+    // Send the message via Fanvue API (optionally with locked media + price)
+    const media = (mediaUuids && mediaUuids.length > 0)
+      ? { mediaUuids, mediaPreviewUuid: mediaPreviewUuid || mediaUuids[0] }
+      : null;
     const result = await sendFanvueMessage(
       accessToken,
       fan.external_uuid,
-      messageBody,
-      ppvCents || null
+      messageBody || null,
+      ppvCents || null,
+      media
     );
 
     // Update the stored message with the external UUID
@@ -73,7 +77,7 @@ export default async function(req) {
       event_type: "message.sent.fanvue",
       status: "success",
       message: "Message sent to Fanvue",
-      metadata: { messageUuid: result.messageUuid, ppvCents },
+      metadata: { messageUuid: result.messageUuid, ppvCents, mediaUuids: mediaUuids || null },
     });
 
     return Response.json({

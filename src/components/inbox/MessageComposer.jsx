@@ -1,5 +1,6 @@
 import React from "react";
 import { Paperclip, Lock, Sparkles, Send, RefreshCw, Check, DollarSign } from "lucide-react";
+import VaultPicker from "@/components/inbox/VaultPicker";
 
 // Fanvue enforces a minimum PPV price of 300 cents ($3.00).
 const PPV_MIN_CENTS = 300;
@@ -17,12 +18,18 @@ export default function MessageComposer({
   generating,
   sending,
   ppvDefaultCents = 1200,
+  creatorProfileId,
 }) {
   const [ppvMode, setPpvMode] = React.useState(false);
   const [ppvAmount, setPpvAmount] = React.useState("");
+  const [selectedMediaUuid, setSelectedMediaUuid] = React.useState(null);
 
   const ppvCents = ppvMode && ppvAmount ? Math.round(parseFloat(ppvAmount) * 100) : null;
+  const hasMedia = !!selectedMediaUuid;
   const ppvValid = !ppvMode || (ppvCents != null && !isNaN(ppvCents) && ppvCents >= PPV_MIN_CENTS);
+  // When media is attached, price is required (locked content). Without media,
+  // a plain priced text message is allowed but price must still meet the min.
+  const canSend = (!!value.trim() || hasMedia) && !sending && ppvValid;
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -32,11 +39,15 @@ export default function MessageComposer({
   };
 
   const handleSend = () => {
-    if (!value.trim() || sending) return;
-    if (!ppvValid) return;
-    onSend({ ppvCents: ppvMode ? ppvCents : null });
+    if (!canSend) return;
+    onSend({
+      ppvCents: ppvMode ? ppvCents : null,
+      mediaUuids: hasMedia ? [selectedMediaUuid] : null,
+      mediaPreviewUuid: hasMedia ? selectedMediaUuid : null,
+    });
     setPpvMode(false);
     setPpvAmount("");
+    setSelectedMediaUuid(null);
   };
 
   const togglePpv = () => {
@@ -103,51 +114,53 @@ export default function MessageComposer({
         </div>
       )}
 
-      {/* PPV input */}
+      {/* PPV + locked media inputs */}
       {ppvMode && (
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-          <Lock className="h-4 w-4 text-warning" />
-          <span className="text-sm text-muted-foreground">PPV amount:</span>
-          <div className="relative">
-            <DollarSign className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="number"
-              min="3"
-              step="0.01"
-              value={ppvAmount}
-              onChange={(e) => setPpvAmount(e.target.value)}
-              placeholder="3.00"
-              className="w-24 rounded-md border border-input bg-background py-1 pl-7 pr-2 text-sm focus:border-ring focus:outline-none"
-            />
+        <>
+          <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+            <Lock className="h-4 w-4 text-warning" />
+            <span className="text-sm text-muted-foreground">PPV amount:</span>
+            <div className="relative">
+              <DollarSign className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="number"
+                min="3"
+                step="0.01"
+                value={ppvAmount}
+                onChange={(e) => setPpvAmount(e.target.value)}
+                placeholder="3.00"
+                className="w-24 rounded-md border border-input bg-background py-1 pl-7 pr-2 text-sm focus:border-ring focus:outline-none"
+              />
+            </div>
+            {ppvAmount && !ppvValid && (
+              <span className="text-xs text-destructive">Min $3.00</span>
+            )}
+            <button
+              onClick={() => setPpvMode(false)}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
           </div>
-          {ppvAmount && !ppvValid && (
-            <span className="text-xs text-destructive">Min $3.00</span>
+          {creatorProfileId && (
+            <VaultPicker
+              creatorProfileId={creatorProfileId}
+              selectedUuid={selectedMediaUuid}
+              onPick={(uuid) => setSelectedMediaUuid(uuid)}
+            />
           )}
-          <button
-            onClick={() => setPpvMode(false)}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            Cancel
-          </button>
-        </div>
+        </>
       )}
 
       {/* Composer */}
       <div className="flex items-end gap-2 px-4 py-3">
         <button
           type="button"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-          title="Attach media"
-        >
-          <Paperclip className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
           onClick={togglePpv}
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md hover:bg-accent ${
             ppvMode ? "text-warning" : "text-muted-foreground hover:text-foreground"
           }`}
-          title="PPV message"
+          title="PPV / locked message"
         >
           <Lock className="h-4 w-4" />
         </button>
@@ -175,7 +188,7 @@ export default function MessageComposer({
         <button
           type="button"
           onClick={handleSend}
-          disabled={!value.trim() || sending || !ppvValid}
+          disabled={!canSend}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
           title="Send message"
         >
