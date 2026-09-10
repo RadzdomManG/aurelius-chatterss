@@ -88,113 +88,90 @@ export default async function(req) {
     const chatFanUuids = []; // track order for message phase
 
     if (!messagesOnly) {
-      let page = 1;
-      let hasMore = true;
-
-      while (hasMore) {
-        const chatsRes = await getChats(accessToken, page, 50);
+      // v1 chats use CURSOR pagination — walk nextCursor until exhausted.
+      const allChats = [];
+      let cursor = null;
+      do {
+        const chatsRes = await getChats(accessToken, { cursor, size: 50 });
         const chats = chatsRes.data || [];
+        allChats.push(...chats);
+        cursor = chatsRes.nextCursor || null;
+        if (cursor) await sleep(400);
+      } while (cursor);
 
-        for (const chat of chats) {
-          const fanUuid = chat.user?.uuid;
-          if (!fanUuid) continue;
+      // Build fans from the full in-memory chat list
+      for (const chat of allChats) {
+        const fanUuid = chat.user?.uuid;
+        if (!fanUuid) continue;
 
-          let fan = fanByUuid.get(fanUuid);
-          if (fan) {
-            if (chat.user?.displayName && chat.user.displayName !== fan.display_name) {
-              fansToUpdate.push({
-                id: fan.id,
-                display_name: chat.user.displayName,
-                handle: chat.user?.handle || fan.handle,
-              });
-              fan.display_name = chat.user.displayName;
-            }
-          } else {
-            fan = {
-              creator_profile_id: creatorProfileIdFinal,
-              external_uuid: fanUuid,
-              display_name: chat.user?.displayName || chat.user?.handle || "Unknown Fan",
-              handle: chat.user?.handle || "",
-              subscription_status: null,
-            };
-            fansToCreate.push(fan);
-            fanByUuid.set(fanUuid, fan);
+        let fan = fanByUuid.get(fanUuid);
+        if (fan) {
+          if (chat.user?.displayName && chat.user.displayName !== fan.display_name) {
+            fansToUpdate.push({
+              id: fan.id,
+              display_name: chat.user.displayName,
+              handle: chat.user?.handle || fan.handle,
+            });
+            fan.display_name = chat.user.displayName;
           }
-
-          // Queue conversation
-          if (fan.id) {
-            const existingConvo = convoByFanId.get(fan.id);
-            if (existingConvo) {
-              convosToUpdate.push({
-                id: existingConvo.id,
-                status: "active",
-                unread_count: chat.unreadMessagesCount || 0,
-                last_message_preview: chat.lastMessage?.text || existingConvo.last_message_preview,
-                last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
-              });
-            }
-          }
-
-          chatFanUuids.push(fanUuid);
-          totalChats++;
+        } else {
+          fan = {
+            creator_profile_id: creatorProfileIdFinal,
+            external_uuid: fanUuid,
+            display_name: chat.user?.displayName || chat.user?.handle || "Unknown Fan",
+            handle: chat.user?.handle || "",
+            subscription_status: null,
+          };
+          fansToCreate.push(fan);
+          fanByUuid.set(fanUuid, fan);
         }
-
-        hasMore = chatsRes.pagination?.hasMore || false;
-        page++;
-        if (hasMore) await sleep(400);
+        chatFanUuids.push(fanUuid);
+        totalChats++;
       }
 
-      // Batch create new fans
+      // Batch create + update fans
       if (fansToCreate.length > 0) {
         const created = await base44.asServiceRole.entities.Fan.bulkCreate(fansToCreate);
         created.forEach((f) => fanByUuid.set(f.external_uuid, f));
       }
-
-      // Batch update fans
       if (fansToUpdate.length > 0) {
         await base44.asServiceRole.entities.Fan.bulkUpdate(fansToUpdate);
       }
 
-      // Create conversations for newly created fans
-      // Re-fetch chats page 1 to build convos (now all fans have IDs)
-      page = 1;
-      hasMore = true;
-      while (hasMore) {
-        const chatsRes = await getChats(accessToken, page, 50);
-        const chats = chatsRes.data || [];
+      // Build conversations from the same in-memory list (fans now have IDs — no second API walk)
+      for (const chat of allChats) {
+        const fanUuid = chat.user?.uuid;
+        if (!fanUuid) continue;
+        const fan = fanByUuid.get(fanUuid);
+        if (!fan || !fan.id) continue;
 
-        for (const chat of chats) {
-          const fanUuid = chat.user?.uuid;
-          if (!fanUuid) continue;
-          const fan = fanByUuid.get(fanUuid);
-          if (!fan || !fan.id) continue;
-
-          if (!convoByFanId.has(fan.id)) {
-            convosToCreate.push({
-              creator_profile_id: creatorProfileIdFinal,
-              fan_id: fan.id,
-              external_chat_uuid: fanUuid,
-              status: "active",
-              unread_count: chat.unreadMessagesCount || 0,
-              last_message_preview: chat.lastMessage?.text || "",
-              last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
-            });
-            // Temp marker; will be replaced after bulkCreate
-            convoByFanId.set(fan.id, { fan_id: fan.id, _pending: true });
-          }
+        const existingConvo = convoByFanId.get(fan.id);
+        if (existingConvo && existingConvo.id) {
+          convosToUpdate.push({
+            id: existingConvo.id,
+            status: "active",
+            unread_count: chat.unreadMessagesCount || 0,
+            last_message_preview: chat.lastMessage?.text || existingConvo.last_message_preview,
+            last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
+          });
+        } else if (!convoByFanId.has(fan.id)) {
+          convosToCreate.push({
+            creator_profile_id: creatorProfileIdFinal,
+            fan_id: fan.id,
+            external_chat_uuid: fanUuid,
+            status: "active",
+            unread_count: chat.unreadMessagesCount || 0,
+            last_message_preview: chat.lastMessage?.text || "",
+            last_sender_type: chat.lastMessage?.senderUuid === creatorUuid ? "creator" : "fan",
+          });
+          convoByFanId.set(fan.id, { fan_id: fan.id, _pending: true });
         }
-
-        hasMore = chatsRes.pagination?.hasMore || false;
-        page++;
-        if (hasMore) await sleep(400);
       }
 
       if (convosToCreate.length > 0) {
         const createdConvos = await base44.asServiceRole.entities.Conversation.bulkCreate(convosToCreate);
         createdConvos.forEach((c) => convoByFanId.set(c.fan_id, c));
       }
-
-      // Apply conversation updates
       if (convosToUpdate.length > 0) {
         await base44.asServiceRole.entities.Conversation.bulkUpdate(convosToUpdate);
       }

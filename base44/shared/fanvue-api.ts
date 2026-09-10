@@ -54,18 +54,30 @@ export async function apiCall(path, accessToken, options = {}, maxRetries = 4) {
 }
 
 export async function getMe(accessToken) {
-  return apiCall("/users/me", accessToken);
+  return apiCall("/v1/users/me", accessToken);
 }
 
-export async function getChats(accessToken, page = 1, size = 50, filter = null) {
-  const params = new URLSearchParams({ page: String(page), size: String(size) });
-  if (filter) params.set("filter", filter);
-  return apiCall(`/chats?${params}`, accessToken);
+// v1 chats use CURSOR pagination (breaking change from page/size).
+// Returns { data: [...], nextCursor: string|null }.
+export async function getChats(accessToken, opts = {}) {
+  const { cursor, size = 15, filter, search, sortBy, sortDirection, smartListIds, userUuids, customListId } = opts;
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  params.set("size", String(size));
+  if (search) params.set("search", search);
+  if (sortBy) params.set("sortBy", sortBy);
+  if (sortDirection) params.set("sortDirection", sortDirection);
+  if (filter) [].concat(filter).forEach((f) => params.append("filter", f));
+  if (smartListIds) [].concat(smartListIds).forEach((s) => params.append("smartListIds", s));
+  if (userUuids) [].concat(userUuids).forEach((u) => params.append("userUuids", u));
+  if (customListId) params.set("customListId", customListId);
+  return apiCall(`/v1/chats?${params}`, accessToken);
 }
 
-export async function getMessages(accessToken, userUuid, size = 50) {
+export async function getMessages(accessToken, userUuid, size = 50, cursor = null) {
   const params = new URLSearchParams({ size: String(size), markAsRead: "false" });
-  return apiCall(`/chats/${userUuid}/messages?${params}`, accessToken);
+  if (cursor) params.set("cursor", cursor);
+  return apiCall(`/v1/chats/${userUuid}/messages?${params}`, accessToken);
 }
 
 export async function sendFanvueMessage(accessToken, userUuid, text, price = null, media = null) {
@@ -100,8 +112,8 @@ export async function getVaultMedia(accessToken, folderId = null, page = 1, size
  */
 export async function getChatForFan(accessToken, fanUuid) {
   const params = new URLSearchParams({ size: "1" });
-  params.set("userUuids", fanUuid);
-  const res = await apiCall(`/chats?${params}`, accessToken);
+  params.append("userUuids", fanUuid);
+  const res = await apiCall(`/v1/chats?${params}`, accessToken);
   return res?.data?.[0]?.user || null;
 }
 
