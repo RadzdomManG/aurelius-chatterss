@@ -1,4 +1,5 @@
 import React from "react";
+import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
 import { Settings as SettingsIcon, Plug, Bot, Zap, Shield, Terminal, KeyRound, CheckCircle, XCircle } from "lucide-react";
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
 import { CheckCircle, XCircle, Loader2 } from "lucide-react";

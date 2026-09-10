@@ -13,13 +13,21 @@ import Register from '@/pages/Register';
 import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
 import Inbox from '@/pages/Inbox';
+import Models from '@/pages/Models';
+import ModelWorkspace from '@/pages/ModelWorkspace';
+import Automation from '@/pages/Automation';
+import Media from '@/pages/Media';
+import Playground from '@/pages/Playground';
+import Analytics from '@/pages/Analytics';
+import Activity from '@/pages/Activity';
+import Settings from '@/pages/Settings';
+import FanvueCallback from '@/pages/FanvueCallback';
 import AppShell from '@/components/AppShell';
 import { Toaster as SonnerToaster } from 'sonner';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
-  // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
@@ -28,27 +36,33 @@ const AuthenticatedApp = () => {
     );
   }
 
-  // Handle authentication errors
   if (authError) {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     } else if (authError.type === 'auth_required') {
-      // Redirect to login automatically
       navigateToLogin();
       return null;
     }
   }
 
-  // Render the main app
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/fanvue/callback" element={<FanvueCallback />} />
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppShell />}>
           <Route path="/" element={<Inbox />} />
+          <Route path="/models" element={<Models />} />
+          <Route path="/models/:creatorProfileId" element={<ModelWorkspace />} />
+          <Route path="/automation" element={<Automation />} />
+          <Route path="/media" element={<Media />} />
+          <Route path="/playground" element={<Playground />} />
+          <Route path="/analytics" element={<Analytics />} />
+          <Route path="/activity" element={<Activity />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />
@@ -56,9 +70,7 @@ const AuthenticatedApp = () => {
   );
 };
 
-
 function App() {
-
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <AuthProvider>
@@ -69,7 +81,7 @@ function App() {
           </Router>
           <Toaster />
           <SonnerToaster position="bottom-right" theme="system" richColors />
-          </QueryClientProvider>
+        </QueryClientProvider>
       </AuthProvider>
     </ThemeProvider>
   )
