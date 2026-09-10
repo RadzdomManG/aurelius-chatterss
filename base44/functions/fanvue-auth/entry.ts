@@ -3,14 +3,65 @@ import { secrets } from "base44:runtime";
 import { encryptToken } from "../../shared/fanvue-crypto.ts";
 import { exchangeCodeForTokens, getMe } from "../../shared/fanvue-api.ts";
 
+// --- PKCE helpers (server-side, never exposed to browser) ---
+function base64url(bytes) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function generateCodeVerifier() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return base64url(bytes);
+}
+
+async function generateCodeChallenge(verifier) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(hash));
+}
+
+const FANVUE_SCOPES = "openid offline_access offline read:self read:chat write:chat";
+
 export default async function(req) {
   try {
     const base44 = createClientFromRequest(req);
     const body = await req.json();
-    const { action, sessionId, code, state, redirectUri } = body;
+    const { action, code, state, redirectUri } = body;
 
+    // --- INITIATE: build the OAuth authorization URL server-side ---
+    if (action === "initiate") {
+      const clientId = secrets.get("FANVUE_CLIENT_ID");
+      const redirect = secrets.get("FANVUE_REDIRECT_URI");
+
+      if (!clientId || !redirect) {
+        return Response.json(
+          { error: "FANVUE_CLIENT_ID and FANVUE_REDIRECT_URI secrets must be set" },
+          { status: 500 }
+        );
+      }
+
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const stateValue = crypto.randomUUID();
+
+      // Store the OAuth session for the callback exchange
+      await base44.asServiceRole.entities.OAuthSession.create({
+        code_verifier: codeVerifier,
+        code_challenge: codeChallenge,
+        state: stateValue,
+        status: "pending",
+      });
+
+      const authUrl = `https://auth.fanvue.com/oauth2/auth?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirect)}&scope=${encodeURIComponent(FANVUE_SCOPES)}&state=${stateValue}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+
+      return Response.json({ authUrl });
+    }
+
+    // --- EXCHANGE: trade the authorization code for access tokens ---
     if (action === "exchange") {
-      // Complete the OAuth flow: exchange the authorization code for tokens
       const sessions = await base44.asServiceRole.entities.OAuthSession.filter(
         { state },
         "-created_date",
@@ -26,10 +77,7 @@ export default async function(req) {
         return Response.json({ error: "Session already completed" }, { status: 409 });
       }
 
-      // Get the redirect URI from AppConfig
-      const configs = await base44.asServiceRole.entities.AppConfig.list("-created_date", 1);
-      const config = configs[0];
-      const redirect = redirectUri || config?.fanvue_redirect_uri || secrets.get("FANVUE_REDIRECT_URI");
+      const redirect = redirectUri || secrets.get("FANVUE_REDIRECT_URI");
 
       // Exchange the code for tokens
       const tokens = await exchangeCodeForTokens(code, redirect, session.code_verifier);
