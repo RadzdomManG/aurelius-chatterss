@@ -184,10 +184,14 @@ export default function Inbox() {
     loadMemories(selectedId);
   }, [selectedId]);
 
-  // Always make sure the selected conversation's fan is in the local map
+  // Always make sure the selected conversation's fan is in the local map.
+  // Derive from selectedId here (selectedConversation is declared below, so we
+  // can't reference it in the dependency array without hitting the temporal
+  // dead zone — which would crash the whole app on render).
   React.useEffect(() => {
-    if (selectedConversation?.fan_id) ensureFan(selectedConversation.fan_id);
-  }, [selectedConversation?.fan_id]);
+    const conv = conversations.find((c) => c.id === selectedId);
+    if (conv?.fan_id) ensureFan(conv.fan_id);
+  }, [selectedId, conversations]);
 
   const loadMessages = async (convId) => {
     try {
