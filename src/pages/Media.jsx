@@ -1,6 +1,7 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import { Image as ImageIcon, Film, Folder, Plug, Download, Lock, DollarSign } from "lucide-react";
 import EmptyState from "@/components/shared/EmptyState";
 import StatusBadge from "@/components/shared/StatusBadge";
@@ -12,6 +13,7 @@ export default function Media() {
   const [fetching, setFetching] = React.useState(false);
   const [creator, setCreator] = React.useState(null);
   const [pagination, setPagination] = React.useState(null);
+  const [needsReconnect, setNeedsReconnect] = React.useState(false);
 
   React.useEffect(() => {
     checkConnection();
@@ -77,6 +79,26 @@ export default function Media() {
     return (
       <div className="flex h-full items-center justify-center">
         <EmptyState icon={Plug} title="Connect Fanvue to view media" description="Media and vault content are loaded from the Fanvue API (read:media scope). Connect a creator account to begin." actionLabel="Go to Models" actionTo="/models" />
+      </div>
+    );
+  }
+
+  if (needsReconnect) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="max-w-md text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-warning/15 mx-auto">
+            <Lock className="h-7 w-7 text-warning" />
+          </div>
+          <h3 className="mb-1.5 font-heading text-lg text-foreground">Reconnect Fanvue to access media</h3>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Your current connection was made before the <code className="rounded bg-muted px-1">read:media</code> scope was added.
+            Reconnect to grant media access and unlock the vault.
+          </p>
+          <Link to="/models" className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+            Go to Models <Download className="h-4 w-4" />
+          </Link>
+        </div>
       </div>
     );
   }
