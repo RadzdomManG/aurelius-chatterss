@@ -10,6 +10,8 @@ export default function ConversationList({
   selectedId,
   onSelect,
   loading,
+  hasConnection,
+  realtimeStatus,
 }) {
   const [search, setSearch] = React.useState("");
   const [filter, setFilter] = React.useState("All");
@@ -44,9 +46,13 @@ export default function ConversationList({
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="font-heading text-xl text-foreground">Inbox</h2>
-        <span className="text-xs text-muted-foreground">
-          {filtered.length} conversations
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 text-xs">
+            <span className={`h-1.5 w-1.5 rounded-full ${realtimeStatus === "live" ? "bg-success" : "bg-warning animate-pulse"}`} />
+            <span className={realtimeStatus === "live" ? "text-success" : "text-warning"}>{realtimeStatus === "live" ? "Live" : "Reconnecting"}</span>
+          </span>
+          <span className="text-xs text-muted-foreground">{filtered.length}</span>
+        </div>
       </div>
 
       {/* Search */}
@@ -96,8 +102,17 @@ export default function ConversationList({
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
-            <Filter className="mb-2 h-8 w-8 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">No conversations found</p>
+            {hasConnection ? (
+              <>
+                <Filter className="mb-2 h-8 w-8 text-muted-foreground/40" />
+                <p className="text-sm text-muted-foreground">No conversations found</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">Connect Fanvue to begin</p>
+                <a href="/models" className="mt-2 text-xs text-primary hover:underline">Go to Models →</a>
+              </>
+            )}
           </div>
         ) : (
           filtered.map((conv) => (
