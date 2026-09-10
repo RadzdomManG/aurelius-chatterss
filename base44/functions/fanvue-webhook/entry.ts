@@ -40,20 +40,55 @@ async function verifySignature(rawBody, signatureHeader, secret) {
   return diff === 0;
 }
 
-async function processMessageReceived(base44, event) {
+/**
+ * Normalize both the legacy flat `message.received` payload and the new
+ * Standard-Webhooks `creator.message.received` envelope into one shape.
+ */
+function normalizeMessageEvent(event, eventType) {
+  const isNew = eventType === "creator.message.received";
+
+  if (isNew) {
+    const data = event.data || {};
+    // Only process inbound fan messages; ignore creator-sent echoes.
+    if (data.sender && data.sender !== "fan") return null;
+
+    const fan = data.fan || {};
+    const creator = data.creator || {};
+    return {
+      msgUuid: data.uuid || null,
+      msgText: data.text || "",
+      sentAt: data.created_at || event.timestamp || new Date().toISOString(),
+      senderUuid: fan.uuid || null,
+      senderName: fan.display_name || fan.handle || "Unknown Fan",
+      senderHandle: fan.handle || "",
+      recipientUuid: creator.uuid || null,
+      mediaUuids: data.media_uuids || [],
+      ppvCents: data.price != null ? data.price : null,
+    };
+  }
+
+  // Legacy flat envelope (camelCase, sender/recipient objects)
   const msg = event.data || event.message || event;
-  const msgUuid = msg.uuid || msg.messageUuid;
-  const msgText = msg.text || msg.body || "";
-  const sentAt = msg.sentAt || msg.createdAt || new Date().toISOString();
   const sender = msg.sender || {};
   const recipient = msg.recipient || {};
-  const senderUuid = sender.uuid || msg.senderUuid;
-  const senderHandle = sender.handle || "";
-  const senderName = sender.displayName || sender.handle || "Unknown Fan";
-  const recipientUuid = recipient.uuid || msg.recipientUuid;
-  const msgType = msg.type || "SINGLE_RECIPIENT";
   const pricing = msg.pricing;
-  const ppvCents = pricing?.USD?.price || null;
+  return {
+    msgUuid: msg.uuid || msg.messageUuid || null,
+    msgText: msg.text || msg.body || "",
+    sentAt: msg.sentAt || msg.createdAt || new Date().toISOString(),
+    senderUuid: sender.uuid || msg.senderUuid || null,
+    senderName: sender.displayName || sender.handle || "Unknown Fan",
+    senderHandle: sender.handle || "",
+    recipientUuid: recipient.uuid || msg.recipientUuid || null,
+    mediaUuids: msg.mediaUuids || [],
+    ppvCents: pricing?.USD?.price || null,
+  };
+}
+
+async function processMessageReceived(base44, event, eventType) {
+  const normalized = normalizeMessageEvent(event, eventType);
+  if (!normalized) return; // null = not an inbound fan message
+  const { msgUuid, msgText, sentAt, senderUuid, senderName, senderHandle, recipientUuid, mediaUuids, ppvCents } = normalized;
 
   if (!senderUuid || !recipientUuid) return;
 
@@ -127,7 +162,7 @@ async function processMessageReceived(base44, event) {
     external_uuid: msgUuid || null,
     sender_type: "fan",
     body: msgText,
-    media: msg.mediaUuids || [],
+    media: mediaUuids,
     ppv_cents: ppvCents,
     source: "webhook",
     fanvue_created_at: sentAt,
@@ -149,7 +184,7 @@ async function processMessageReceived(base44, event) {
     event_type: "fan.message.received",
     status: "info",
     message: `New message from ${senderName}`,
-    metadata: { messageUuid: msgUuid },
+    metadata: { messageUuid: msgUuid, event: eventType },
   });
 
   // Trigger server-side AI processing (auto-respond or generate draft for approval)
@@ -160,11 +195,29 @@ async function processMessageReceived(base44, event) {
   }
 }
 
+const INBOUND_EVENTS = new Set(["message.received", "creator.message.received"]);
+
 export default async function(req) {
   try {
     const rawBody = await req.text();
     const signatureHeader = req.headers.get("X-Fanvue-Signature");
     const webhookSecret = secrets.get("FANVUE_WEBHOOK_SECRET");
+
+    // Diagnostic: log EVERY raw request so we can tell whether Fanvue is
+    // reaching us at all (distinguishes "not registered" from "bad signature")
+    try {
+      const diagBase44 = createClientFromRequest(req);
+      let eventTypeHint = "unknown";
+      try {
+        const parsed = JSON.parse(rawBody);
+        eventTypeHint = parsed.event || parsed.type || "unknown";
+      } catch (e) {}
+      waitUntil(diagBase44.asServiceRole.entities.ActivityLog.create({
+        event_type: "webhook.request",
+        status: signatureHeader ? "info" : "warning",
+        message: `Raw webhook request — event: ${eventTypeHint}, signature: ${signatureHeader ? "present" : "missing"}, bodyLength: ${rawBody.length}`,
+      }));
+    } catch (e) {}
 
     if (!signatureHeader) {
       return Response.json({ error: "Missing signature header" }, { status: 401 });
@@ -175,15 +228,23 @@ export default async function(req) {
 
     const valid = await verifySignature(rawBody, signatureHeader, webhookSecret);
     if (!valid) {
+      try {
+        const errBase44 = createClientFromRequest(req);
+        waitUntil(errBase44.asServiceRole.entities.ActivityLog.create({
+          event_type: "webhook.signature_failed",
+          status: "error",
+          message: "Webhook signature verification failed",
+        }));
+      } catch (e) {}
       return Response.json({ error: "Invalid signature" }, { status: 401 });
     }
 
     const event = JSON.parse(rawBody);
     const eventType = event.event || event.type;
 
-    if (eventType === "message.received") {
+    if (INBOUND_EVENTS.has(eventType)) {
       const base44 = createClientFromRequest(req);
-      waitUntil(processMessageReceived(base44, event));
+      waitUntil(processMessageReceived(base44, event, eventType));
     }
 
     // Log webhook receipt
