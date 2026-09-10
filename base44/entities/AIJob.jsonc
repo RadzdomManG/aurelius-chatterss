@@ -30,12 +30,25 @@
       "type": "integer",
       "default": 0
     },
+    "available_at": {
+      "type": "string",
+      "format": "date-time"
+    },
     "locked_at": {
       "type": "string",
       "format": "date-time"
     },
+    "locked_by": {
+      "type": "string"
+    },
     "last_error": {
       "type": "string"
+    },
+    "reply_text": {
+      "type": "string"
+    },
+    "confidence": {
+      "type": "number"
     }
   },
   "required": [
