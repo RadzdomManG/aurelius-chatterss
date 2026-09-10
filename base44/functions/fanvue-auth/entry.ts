@@ -23,7 +23,7 @@ async function generateCodeChallenge(verifier) {
   return base64url(new Uint8Array(hash));
 }
 
-const FANVUE_SCOPES = "openid offline_access offline read:self read:chat write:chat";
+const FANVUE_SCOPES = "openid offline_access offline read:self read:chat write:chat read:media";
 
 export default async function(req) {
   try {

@@ -8,6 +8,7 @@ export default function MessageComposer({
   onGenerateDraft,
   draft,
   onUseDraft,
+  onApproveAndSend,
   onRegenerateDraft,
   onClearDraft,
   generating,
@@ -56,11 +57,21 @@ export default function MessageComposer({
           <div className="flex gap-2">
             <button
               onClick={onUseDraft}
-              className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
             >
               <Check className="h-3.5 w-3.5" />
               Use Draft
             </button>
+            {onApproveAndSend && (
+              <button
+                onClick={onApproveAndSend}
+                disabled={sending}
+                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" />
+                Approve & Send
+              </button>
+            )}
             <button
               onClick={onRegenerateDraft}
               disabled={generating}

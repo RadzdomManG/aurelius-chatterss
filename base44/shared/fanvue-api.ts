@@ -77,6 +77,17 @@ export async function sendFanvueMessage(accessToken, userUuid, text, price = nul
   });
 }
 
+export async function getMedia(accessToken, page = 1, size = 50) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  return apiCall(`/media?${params}`, accessToken);
+}
+
+export async function getVaultMedia(accessToken, folderId = null, page = 1, size = 50) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  if (folderId) params.set("folderId", folderId);
+  return apiCall(`/vault/media?${params}`, accessToken);
+}
+
 export async function exchangeCodeForTokens(code, redirectUri, codeVerifier) {
   const res = await fetch(TOKEN_URL, {
     method: "POST",

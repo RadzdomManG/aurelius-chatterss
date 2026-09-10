@@ -20,6 +20,7 @@ export default function ChatThread({
   onGenerateDraft,
   draft,
   onUseDraft,
+  onApproveAndSend,
   onRegenerateDraft,
   onClearDraft,
   onModeChange,
@@ -160,6 +161,7 @@ export default function ChatThread({
         onChange={onComposerChange}
         onSend={onSend}
         onGenerateDraft={onGenerateDraft}
+        onApproveAndSend={onApproveAndSend}
         draft={draft}
         onUseDraft={onUseDraft}
         onRegenerateDraft={onRegenerateDraft}

@@ -204,7 +204,10 @@ export default function Inbox() {
         ppv_cents: ppvCents || null,
         source: "manual",
       });
-      setMessages((prev) => [...prev, msg]);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
 
       const now = new Date().toISOString();
       await base44.entities.Conversation.update(selectedId, {
@@ -311,6 +314,66 @@ export default function Inbox() {
     });
   };
 
+  const handleApproveAndSend = async () => {
+    if (!draft || !selectedId) return;
+    const reply = draft.reply;
+    const conv = conversations.find((c) => c.id === selectedId);
+    const jobId = draft.jobId;
+    setDraft(null);
+    setComposerValue("");
+
+    try {
+      setSending(true);
+
+      const msg = await base44.entities.Message.create({
+        creator_profile_id: conv.creator_profile_id,
+        conversation_id: selectedId,
+        sender_type: "creator",
+        body: reply,
+        source: "ai",
+      });
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
+
+      const now = new Date().toISOString();
+      await base44.entities.Conversation.update(selectedId, {
+        last_message_at: now,
+        last_message_preview: reply,
+        last_sender_type: "creator",
+      });
+      setConversations((prev) =>
+        prev.map((c) => c.id === selectedId ? { ...c, last_message_at: now, last_message_preview: reply, last_sender_type: "creator" } : c)
+      );
+
+      if (jobId) {
+        await base44.entities.AIJob.update(jobId, { status: "completed" });
+      }
+
+      try {
+        await base44.functions.invoke("send-message", { conversationId: selectedId, body: reply });
+        toast.success("AI draft sent to Fanvue");
+      } catch (fnErr) {
+        toast.error("Fanvue delivery failed — message saved locally");
+      }
+
+      await base44.entities.ActivityLog.create({
+        creator_profile_id: conv.creator_profile_id,
+        conversation_id: selectedId,
+        event_type: "ai.approved_sent",
+        status: "success",
+        message: "AI draft approved and sent",
+        metadata: { job_id: jobId, confidence: draft.confidence },
+      });
+    } catch (err) {
+      console.error("Failed to send draft:", err);
+      toast.error("Error sending AI draft");
+    } finally {
+      setSending(false);
+    }
+  };
+
   const handleModeChange = async (mode) => {
     if (!selectedId) return;
     try {
@@ -360,6 +423,7 @@ export default function Inbox() {
             onGenerateDraft={handleGenerateDraft}
             draft={draft}
             onUseDraft={handleUseDraft}
+            onApproveAndSend={handleApproveAndSend}
             onRegenerateDraft={handleGenerateDraft}
             onClearDraft={() => setDraft(null)}
             onModeChange={handleModeChange}

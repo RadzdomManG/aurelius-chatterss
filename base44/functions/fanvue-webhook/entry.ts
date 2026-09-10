@@ -1,5 +1,6 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
 import { secrets, waitUntil } from "base44:runtime";
+import { processAIJob } from "../../shared/ai-processor.ts";
 
 const TOLERANCE_SECONDS = 300;
 
@@ -141,14 +142,6 @@ async function processMessageReceived(base44, event) {
     last_sender_type: "fan",
   });
 
-  // Create an AIJob to trigger draft generation (client-side useAIProcessor will pick it up)
-  await base44.asServiceRole.entities.AIJob.create({
-    creator_profile_id: creatorProfileId,
-    conversation_id: conversation.id,
-    trigger_message_uuid: msgUuid || null,
-    status: "pending",
-  });
-
   // Log activity
   await base44.asServiceRole.entities.ActivityLog.create({
     creator_profile_id: creatorProfileId,
@@ -158,6 +151,13 @@ async function processMessageReceived(base44, event) {
     message: `New message from ${senderName}`,
     metadata: { messageUuid: msgUuid },
   });
+
+  // Trigger server-side AI processing (auto-respond or generate draft for approval)
+  try {
+    await processAIJob(base44, conversation.id, null, msgUuid);
+  } catch (aiErr) {
+    console.error("AI processing failed:", aiErr.message);
+  }
 }
 
 export default async function(req) {
