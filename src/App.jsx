@@ -24,6 +24,12 @@ import Diagnostics from '@/pages/Diagnostics';
 import Settings from '@/pages/Settings';
 import FanvueCallback from '@/pages/FanvueCallback';
 import CalendarPage from '@/pages/Calendar';
+import MassMessages from '@/pages/MassMessages';
+import Posts from '@/pages/Posts';
+import Notifications from '@/pages/Notifications';
+import Subscribers from '@/pages/Subscribers';
+import Templates from '@/pages/Templates';
+import Webhooks from '@/pages/Webhooks';
 import AppShell from '@/components/AppShell';
 import { Toaster as SonnerToaster } from 'sonner';
 
@@ -61,6 +67,12 @@ const AuthenticatedApp = () => {
           <Route path="/models/:creatorProfileId" element={<ModelWorkspace />} />
           <Route path="/automation" element={<Automation />} />
           <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/mass-messages" element={<MassMessages />} />
+          <Route path="/posts" element={<Posts />} />
+          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/subscribers" element={<Subscribers />} />
+          <Route path="/templates" element={<Templates />} />
+          <Route path="/webhooks" element={<Webhooks />} />
           <Route path="/media" element={<Media />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="/analytics" element={<Analytics />} />

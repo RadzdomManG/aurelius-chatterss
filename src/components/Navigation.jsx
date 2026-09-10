@@ -12,6 +12,11 @@ import {
   Calendar,
   CircleDot,
   Stethoscope,
+  Megaphone,
+  Newspaper,
+  Bell,
+  FileText,
+  Webhook,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import LiveActivityBell from "@/components/shared/LiveActivityBell";
@@ -21,8 +26,14 @@ const navItems = [
   { to: "/models", label: "Models", icon: Users },
   { to: "/automation", label: "Automation", icon: Bot },
   { to: "/calendar", label: "Calendar", icon: Calendar },
+  { to: "/mass-messages", label: "Mass", icon: Megaphone },
+  { to: "/posts", label: "Posts", icon: Newspaper },
+  { to: "/subscribers", label: "Audience", icon: Users },
+  { to: "/notifications", label: "Notifications", icon: Bell },
   { to: "/media", label: "Media", icon: Image },
   { to: "/playground", label: "Playground", icon: FlaskConical },
+  { to: "/templates", label: "Templates", icon: FileText },
+  { to: "/webhooks", label: "Webhooks", icon: Webhook },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/diagnostics", label: "Diagnostics", icon: Stethoscope },
