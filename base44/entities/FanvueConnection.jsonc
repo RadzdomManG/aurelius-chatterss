@@ -40,6 +40,23 @@
     "last_health_check_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "last_sync_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sync_status": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "syncing",
+        "completed",
+        "error"
+      ],
+      "default": "idle"
+    },
+    "sync_progress": {
+      "type": "object"
     }
   },
   "required": [
