@@ -68,9 +68,9 @@ const handleConnectFanvue = async () => {
         status: "pending",
       });
 
-      // Build OAuth authorization URL
-      const scopes = config.fanvue_scopes || "read:chats write:chats read:insights read:media";
-      const authUrl = `https://auth.fanvue.com/oauth/authorize?response_type=code&client_id=${config.fanvue_client_id}&redirect_uri=${encodeURIComponent(config.fanvue_redirect_uri)}&scope=${encodeURIComponent(scopes)}&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+      // Build OAuth authorization URL (official Fanvue OAuth2 endpoint)
+      const scopes = config.fanvue_scopes || "openid offline_access offline read:self read:chat write:chat";
+      const authUrl = `https://auth.fanvue.com/oauth2/auth?response_type=code&client_id=${config.fanvue_client_id}&redirect_uri=${encodeURIComponent(config.fanvue_redirect_uri)}&scope=${encodeURIComponent(scopes)}&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
 
       window.location.href = authUrl;
     } catch (err) {

@@ -2,12 +2,12 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
-import { CheckCircle, XCircle, Loader2, ArrowRight, KeyRound, MessageSquare } from "lucide-react";
+import { CheckCircle, XCircle, Loader2, ArrowRight } from "lucide-react";
 
 export default function FanvueCallback() {
   const [status, setStatus] = React.useState("processing");
   const [error, setError] = React.useState(null);
-  const [sessionInfo, setSessionInfo] = React.useState(null);
+  const [creatorName, setCreatorName] = React.useState(null);
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -34,36 +34,24 @@ export default function FanvueCallback() {
     }
 
     try {
-      // Find the OAuth session by state
-      const sessions = await base44.entities.OAuthSession.filter({ state }, "-created_date", 1);
-      const session = sessions[0];
+      // Exchange the authorization code for tokens via the backend function
+      const res = await base44.functions.invoke("fanvue-auth", {
+        action: "exchange",
+        code,
+        state,
+      });
 
-      if (!session) {
+      if (res.data?.success) {
+        setStatus("success");
+        setCreatorName(res.data.creatorName || res.data.creatorHandle);
+        toast.success("Fanvue account connected!");
+      } else {
         setStatus("error");
-        setError("No matching OAuth session found. Please try connecting again from the Models page.");
-        return;
+        setError(res.data?.error || "Token exchange failed");
       }
-
-      // Store the auth code and mark as exchanging
-      await base44.entities.OAuthSession.update(session.id, {
-        auth_code: code,
-        status: "exchanging",
-      });
-
-      // Log activity
-      await base44.entities.ActivityLog.create({
-        event_type: "fanvue.auth.callback",
-        status: "info",
-        message: "Fanvue authorization code received. Token exchange pending.",
-        metadata: { session_id: session.id },
-      });
-
-      setSessionInfo({ sessionId: session.id });
-      setStatus("success");
-      toast.success("Authorization received!");
     } catch (err) {
       setStatus("error");
-      setError(err.message || "Failed to process authorization callback");
+      setError(err.response?.data?.error || err.message || "Failed to complete Fanvue connection");
     }
   };
 
@@ -73,8 +61,8 @@ export default function FanvueCallback() {
         {status === "processing" && (
           <>
             <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-primary" />
-            <h2 className="font-heading text-xl text-foreground">Processing Authorization...</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Verifying your Fanvue authorization</p>
+            <h2 className="font-heading text-xl text-foreground">Connecting Fanvue...</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Exchanging authorization code for access tokens</p>
           </>
         )}
 
@@ -83,32 +71,17 @@ export default function FanvueCallback() {
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success/15">
               <CheckCircle className="h-8 w-8 text-success" />
             </div>
-            <h2 className="font-heading text-xl text-foreground">Authorization Received!</h2>
+            <h2 className="font-heading text-xl text-foreground">Fanvue Connected!</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Your Fanvue authorization code has been captured. To complete the connection and start syncing,
-              ask the assistant to <strong>complete the Fanvue OAuth token exchange</strong>.
+              {creatorName ? `Account "${creatorName}" is now connected.` : "Your Fanvue account is now connected."}
+              {" "}Run a sync from the Models page to pull in your conversations.
             </p>
-
-            <div className="mt-6 rounded-lg border border-border bg-card p-4 text-left">
-              <div className="mb-2 flex items-center gap-2">
-                <KeyRound className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium text-foreground">Connection Status</span>
-              </div>
-              <div className="space-y-1 text-xs text-muted-foreground">
-                <p>Authorization code: <span className="font-mono">received</span></p>
-                <p>Token exchange: <span className="text-warning">pending</span></p>
-                <p>Session ID: <span className="font-mono">{sessionInfo?.sessionId?.slice(0, 12)}...</span></p>
-              </div>
-            </div>
-
-            <div className="mt-6 flex flex-col gap-2">
-              <button
-                onClick={() => navigate("/models")}
-                className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                Go to Models <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
+            <button
+              onClick={() => navigate("/models")}
+              className="mt-6 inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Go to Models <ArrowRight className="h-4 w-4" />
+            </button>
           </>
         )}
 
