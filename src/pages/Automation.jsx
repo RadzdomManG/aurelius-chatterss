@@ -1,7 +1,9 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
-import { Bot, Clock, AlertTriangle, Send, ListChecks, RotateCcw, MessageSquare } from "lucide-react";
+import { Bot, Clock, AlertTriangle, Send, ListChecks, RotateCcw, MessageSquare, Zap } from "lucide-react";
+import MassMessaging from "@/components/automation/MassMessaging";
+import RulesManager from "@/components/automation/RulesManager";
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
 
@@ -9,6 +11,8 @@ const TABS = [
   { id: "queue", label: "Queue", icon: Clock },
   { id: "failed", label: "Failed Jobs", icon: AlertTriangle },
   { id: "scheduled", label: "Scheduled", icon: Send },
+  { id: "mass", label: "Mass Messaging", icon: Send },
+  { id: "rules", label: "Rules", icon: Zap },
 ];
 
 export default function Automation() {
@@ -87,6 +91,10 @@ export default function Automation() {
           <JobList jobs={failed} emptyIcon={AlertTriangle} onRetry={handleRetry} showRetry />
         ) : tab === "scheduled" ? (
           <ScheduledList items={scheduled} />
+        ) : tab === "mass" ? (
+          <MassMessaging />
+        ) : tab === "rules" ? (
+          <RulesManager />
         ) : null}
       </div>
     </div>

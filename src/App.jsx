@@ -22,6 +22,7 @@ import Analytics from '@/pages/Analytics';
 import Activity from '@/pages/Activity';
 import Settings from '@/pages/Settings';
 import FanvueCallback from '@/pages/FanvueCallback';
+import CalendarPage from '@/pages/Calendar';
 import AppShell from '@/components/AppShell';
 import { Toaster as SonnerToaster } from 'sonner';
 
@@ -58,6 +59,7 @@ const AuthenticatedApp = () => {
           <Route path="/models" element={<Models />} />
           <Route path="/models/:creatorProfileId" element={<ModelWorkspace />} />
           <Route path="/automation" element={<Automation />} />
+          <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/media" element={<Media />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="/analytics" element={<Analytics />} />

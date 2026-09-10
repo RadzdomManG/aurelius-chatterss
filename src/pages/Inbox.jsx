@@ -138,6 +138,22 @@ export default function Inbox() {
       const msgs = await base44.entities.Message.filter({ conversation_id: convId }, "created_date", 100);
       setMessages(msgs);
 
+      // Load pending AI draft for review (from auto-processing)
+      const pendingJobs = await base44.entities.AIJob.filter(
+        { conversation_id: convId, status: "needs_approval" },
+        "-created_date",
+        1
+      );
+      if (pendingJobs[0]?.reply_text) {
+        setDraft({
+          reply: pendingJobs[0].reply_text,
+          confidence: pendingJobs[0].confidence,
+          jobId: pendingJobs[0].id,
+        });
+      } else {
+        setDraft(null);
+      }
+
       const conv = conversations.find((c) => c.id === convId);
       if (conv && conv.unread_count > 0) {
         await base44.entities.Conversation.update(convId, { unread_count: 0 });

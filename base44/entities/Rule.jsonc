@@ -1,0 +1,51 @@
+{
+  "name": "Rule",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "new_subscriber",
+        "new_message",
+        "high_spender",
+        "inactive_fan",
+        "first_message"
+      ]
+    },
+    "trigger_conditions": {
+      "type": "object"
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "send_message",
+        "send_ppv",
+        "pause_ai",
+        "tag_fan",
+        "notify"
+      ]
+    },
+    "action_payload": {
+      "type": "object"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "creator_profile_id",
+    "name",
+    "trigger",
+    "action_type"
+  ]
+}

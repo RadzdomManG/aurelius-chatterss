@@ -9,14 +9,17 @@ import {
   BarChart3,
   Activity,
   Settings,
+  Calendar,
   CircleDot,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
+import LiveActivityBell from "@/components/shared/LiveActivityBell";
 
 const navItems = [
   { to: "/", label: "Inbox", icon: Inbox },
   { to: "/models", label: "Models", icon: Users },
   { to: "/automation", label: "Automation", icon: Bot },
+  { to: "/calendar", label: "Calendar", icon: Calendar },
   { to: "/media", label: "Media", icon: Image },
   { to: "/playground", label: "Playground", icon: FlaskConical },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
@@ -63,11 +66,8 @@ export default function Navigation() {
       </div>
 
       <div className="flex w-full flex-col items-center gap-2 px-2 lg:items-stretch lg:px-3">
-        <div className="hidden items-center gap-2 rounded-md px-2.5 py-2 text-xs text-muted-foreground lg:flex">
-          <CircleDot className="h-3 w-3 text-success" />
-          <span>System Ready</span>
-        </div>
-        <div className="flex items-center justify-center lg:justify-end">
+        <div className="flex items-center justify-center gap-2 lg:justify-end">
+          <LiveActivityBell />
           <ThemeToggle />
         </div>
       </div>
