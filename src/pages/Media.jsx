@@ -48,11 +48,18 @@ export default function Media() {
       if (res.data?.success) {
         setMediaItems(res.data.data || []);
         setPagination(res.data.pagination);
+      } else if (res.data?.needsReconnect) {
+        setNeedsReconnect(true);
       } else {
         toast.error(res.data?.error || "Failed to load media");
       }
     } catch (err) {
-      toast.error("Failed to load media: " + (err.response?.data?.error || err.message));
+      const msg = err.response?.data?.error || err.message || "";
+      if (msg.includes("Insufficient scopes") || msg.includes("reconnect")) {
+        setNeedsReconnect(true);
+      } else {
+        toast.error("Failed to load media: " + msg);
+      }
     } finally {
       setFetching(false);
     }

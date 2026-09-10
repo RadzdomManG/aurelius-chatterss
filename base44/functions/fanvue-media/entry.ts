@@ -47,6 +47,14 @@ export default async function(req) {
       pagination: mediaRes.pagination || null,
     });
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    // Detect insufficient scopes and give a clear reconnect instruction
+    const msg = error.message || "";
+    if (msg.includes("403") || msg.toLowerCase().includes("insufficient scopes")) {
+      return Response.json({
+        error: "Insufficient scopes — reconnect Fanvue to grant read:media access. Go to Models → Fanvue → Reconnect.",
+        needsReconnect: true,
+      }, { status: 403 });
+    }
+    return Response.json({ error: msg }, { status: 500 });
   }
 }
