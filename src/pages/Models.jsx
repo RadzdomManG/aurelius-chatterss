@@ -5,16 +5,7 @@ import { Link } from "react-router-dom";
 import { Plus, Users, Plug, Zap, Clock, ArrowRight } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
-
-function generateCodeVerifier() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-async function generateCodeChallenge(verifier) {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-  return btoa(String.fromCharCode(...new Uint8Array(hash))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+import { initiateFanvueOAuth } from "@/lib/fanvue-oauth";
 
 export default function Models() {
   const [creators, setCreators] = React.useState([]);
@@ -47,32 +38,7 @@ export default function Models() {
 const handleConnectFanvue = async () => {
     try {
       setConnecting(true);
-      // Read OAuth config from AppConfig entity (populated from secrets)
-      const configs = await base44.entities.AppConfig.list("-created_date", 1);
-      const config = configs[0];
-      if (!config?.fanvue_client_id) {
-        toast.error("Fanvue OAuth not configured yet. The assistant is setting up the config — try again in a moment.");
-        return;
-      }
-
-      // Generate PKCE
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const state = crypto.randomUUID();
-
-      // Store OAuth session for the callback
-      await base44.entities.OAuthSession.create({
-        code_verifier: codeVerifier,
-        code_challenge: codeChallenge,
-        state,
-        status: "pending",
-      });
-
-      // Build OAuth authorization URL (official Fanvue OAuth2 endpoint)
-      const scopes = config.fanvue_scopes || "openid offline_access offline read:self read:chat write:chat";
-      const authUrl = `https://auth.fanvue.com/oauth2/auth?response_type=code&client_id=${config.fanvue_client_id}&redirect_uri=${encodeURIComponent(config.fanvue_redirect_uri)}&scope=${encodeURIComponent(scopes)}&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
-
-      window.location.href = authUrl;
+      await initiateFanvueOAuth();
     } catch (err) {
       toast.error("Failed to initiate Fanvue OAuth: " + (err.message || "Unknown error"));
     } finally {

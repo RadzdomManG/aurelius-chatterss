@@ -3,13 +3,17 @@ import { secrets } from "base44:runtime";
 import { getValidAccessToken, getChats, getMessages, getMe } from "../../shared/fanvue-api.ts";
 
 export default async function(req) {
+  let parsedBody = {};
+  try {
+    parsedBody = await req.json();
+  } catch (e) {}
+
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = await req.json().catch(() => ({}));
-    const { creatorProfileId, fullSync } = body;
+    const { creatorProfileId, fullSync } = parsedBody;
 
     // Find the FanvueConnection for this creator
     let connection;
@@ -190,10 +194,9 @@ export default async function(req) {
     // Mark sync as errored
     try {
       const base44 = createClientFromRequest(req);
-      const body = await req.json().catch(() => ({}));
-      if (body.creatorProfileId) {
+      if (parsedBody.creatorProfileId) {
         const conns = await base44.asServiceRole.entities.FanvueConnection.filter(
-          { creator_profile_id: body.creatorProfileId },
+          { creator_profile_id: parsedBody.creatorProfileId },
           "-created_date",
           1
         );
@@ -204,7 +207,7 @@ export default async function(req) {
         }
       }
       await base44.asServiceRole.entities.ActivityLog.create({
-        creator_profile_id: body.creatorProfileId,
+        creator_profile_id: parsedBody.creatorProfileId,
         event_type: "sync.error",
         status: "error",
         message: error.message,

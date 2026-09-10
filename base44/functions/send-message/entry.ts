@@ -3,13 +3,17 @@ import { secrets } from "base44:runtime";
 import { getValidAccessToken, sendFanvueMessage } from "../../shared/fanvue-api.ts";
 
 export default async function(req) {
+  let parsedBody = {};
+  try {
+    parsedBody = await req.json();
+  } catch (e) {}
+
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = await req.json();
-    const { conversationId, body: messageBody, ppvCents } = body;
+    const { conversationId, body: messageBody, ppvCents } = parsedBody;
 
     if (!conversationId || !messageBody) {
       return Response.json({ error: "conversationId and body are required" }, { status: 400 });
@@ -38,7 +42,7 @@ export default async function(req) {
       return Response.json({ error: "Fanvue account not connected" }, { status: 400 });
     }
 
-    // Get a valid access token
+    // Get a valid access token (refresh if needed)
     const accessToken = await getValidAccessToken(connection, base44);
 
     // Send the message via Fanvue API
@@ -77,12 +81,10 @@ export default async function(req) {
       messageUuid: result.messageUuid,
     });
   } catch (error) {
-    // Log error
     try {
       const base44 = createClientFromRequest(req);
-      const body = await req.json().catch(() => ({}));
       await base44.asServiceRole.entities.ActivityLog.create({
-        conversation_id: body.conversationId,
+        conversation_id: parsedBody.conversationId,
         event_type: "fanvue.send.error",
         status: "error",
         message: error.message,

@@ -225,8 +225,7 @@ export default function Inbox() {
         });
         toast.success("Message sent to Fanvue");
       } catch (fnErr) {
-        // Backend function not available (needs Builder+)
-        toast.info("Message stored. Fanvue delivery requires backend function (Builder+).");
+        toast.error("Fanvue delivery failed — message saved locally: " + (fnErr.response?.data?.error || fnErr.message || "Unknown error"));
       }
 
       await base44.entities.ActivityLog.create({
