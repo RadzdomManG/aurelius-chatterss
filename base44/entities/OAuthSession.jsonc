@@ -1,0 +1,39 @@
+{
+  "name": "OAuthSession",
+  "type": "object",
+  "properties": {
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "code_verifier": {
+      "type": "string"
+    },
+    "code_challenge": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "auth_code": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "exchanging",
+        "completed",
+        "failed",
+        "expired"
+      ],
+      "default": "pending"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "code_verifier",
+    "state"
+  ]
+}

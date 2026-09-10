@@ -6,6 +6,16 @@ import { Plus, Users, Plug, Zap, Clock, ArrowRight } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
 
+function generateCodeVerifier() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function generateCodeChallenge(verifier) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return btoa(String.fromCharCode(...new Uint8Array(hash))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 export default function Models() {
   const [creators, setCreators] = React.useState([]);
   const [connections, setConnections] = React.useState({});
@@ -34,18 +44,37 @@ export default function Models() {
     }
   };
 
-  const handleConnectFanvue = async () => {
+const handleConnectFanvue = async () => {
     try {
       setConnecting(true);
-      // Initiate Fanvue OAuth via backend function
-      const res = await base44.functions.invoke("fanvue-auth", { action: "initiate" });
-      if (res.data?.authUrl) {
-        window.location.href = res.data.authUrl;
-      } else {
-        toast.error("Failed to get Fanvue authorization URL");
+      // Read OAuth config from AppConfig entity (populated from secrets)
+      const configs = await base44.entities.AppConfig.list("-created_date", 1);
+      const config = configs[0];
+      if (!config?.fanvue_client_id) {
+        toast.error("Fanvue OAuth not configured yet. The assistant is setting up the config — try again in a moment.");
+        return;
       }
+
+      // Generate PKCE
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const state = crypto.randomUUID();
+
+      // Store OAuth session for the callback
+      await base44.entities.OAuthSession.create({
+        code_verifier: codeVerifier,
+        code_challenge: codeChallenge,
+        state,
+        status: "pending",
+      });
+
+      // Build OAuth authorization URL
+      const scopes = config.fanvue_scopes || "read:chats write:chats read:insights read:media";
+      const authUrl = `https://auth.fanvue.com/oauth/authorize?response_type=code&client_id=${config.fanvue_client_id}&redirect_uri=${encodeURIComponent(config.fanvue_redirect_uri)}&scope=${encodeURIComponent(scopes)}&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+
+      window.location.href = authUrl;
     } catch (err) {
-      toast.error("Fanvue OAuth requires backend function (Builder+ plan). Go to Settings to configure.");
+      toast.error("Failed to initiate Fanvue OAuth: " + (err.message || "Unknown error"));
     } finally {
       setConnecting(false);
     }

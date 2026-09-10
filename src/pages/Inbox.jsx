@@ -251,6 +251,15 @@ export default function Inbox() {
       setGenerating(true);
       setAiState({ state: "processing" });
 
+      const conv = conversations.find((c) => c.id === selectedId);
+      await base44.entities.ActivityLog.create({
+        creator_profile_id: conv?.creator_profile_id,
+        conversation_id: selectedId,
+        event_type: "ai.draft.requested",
+        status: "info",
+        message: "Manual AI draft requested",
+      });
+
       const lastFanMessage = [...messages].reverse().find((m) => m.sender_type === "fan");
       const memoryText = memories.map((m) => `${m.memory_key}: ${m.memory_value}`).join("\n");
 
@@ -285,10 +294,22 @@ export default function Inbox() {
     }
   };
 
-  const handleUseDraft = () => {
+  const handleUseDraft = async () => {
     if (!draft) return;
     setComposerValue(draft.reply);
     setDraft(null);
+    const conv = conversations.find((c) => c.id === selectedId);
+    if (draft.jobId) {
+      await base44.entities.AIJob.update(draft.jobId, { status: "completed" });
+    }
+    await base44.entities.ActivityLog.create({
+      creator_profile_id: conv?.creator_profile_id,
+      conversation_id: selectedId,
+      event_type: "ai.approved",
+      status: "success",
+      message: "AI draft approved and loaded into composer",
+      metadata: { job_id: draft.jobId, confidence: draft.confidence },
+    });
   };
 
   const handleModeChange = async (mode) => {

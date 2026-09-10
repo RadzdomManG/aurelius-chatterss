@@ -1,0 +1,22 @@
+{
+  "name": "AppConfig",
+  "type": "object",
+  "properties": {
+    "fanvue_client_id": {
+      "type": "string"
+    },
+    "fanvue_redirect_uri": {
+      "type": "string"
+    },
+    "fanvue_scopes": {
+      "type": "string"
+    },
+    "ai_model": {
+      "type": "string",
+      "default": "grok-3-latest"
+    },
+    "webhook_url": {
+      "type": "string"
+    }
+  }
+}
