@@ -1,0 +1,26 @@
+{
+  "name": "OrganizationMember",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "user_id": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "owner",
+        "admin",
+        "operator"
+      ],
+      "default": "operator"
+    }
+  },
+  "required": [
+    "organization_id",
+    "user_id",
+    "role"
+  ]
+}

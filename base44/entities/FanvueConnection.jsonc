@@ -1,0 +1,48 @@
+{
+  "name": "FanvueConnection",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "external_user_uuid": {
+      "type": "string"
+    },
+    "encrypted_access_token": {
+      "type": "string"
+    },
+    "encrypted_refresh_token": {
+      "type": "string"
+    },
+    "access_token_expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "granted_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "connected",
+        "disconnected",
+        "expired",
+        "error"
+      ],
+      "default": "disconnected"
+    },
+    "last_health_check_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "creator_profile_id"
+  ]
+}

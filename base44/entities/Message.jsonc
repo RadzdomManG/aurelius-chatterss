@@ -1,0 +1,51 @@
+{
+  "name": "Message",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "conversation_id": {
+      "type": "string"
+    },
+    "external_uuid": {
+      "type": "string"
+    },
+    "sender_type": {
+      "type": "string",
+      "enum": [
+        "fan",
+        "creator",
+        "ai",
+        "system"
+      ]
+    },
+    "body": {
+      "type": "string"
+    },
+    "media": {
+      "type": "array"
+    },
+    "ppv_cents": {
+      "type": "integer"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "fanvue",
+        "manual",
+        "ai",
+        "sync",
+        "webhook"
+      ],
+      "default": "fanvue"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "sender_type"
+  ]
+}

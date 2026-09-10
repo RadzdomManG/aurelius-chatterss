@@ -1,0 +1,45 @@
+{
+  "name": "AutomationSettings",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "approval_required": {
+      "type": "boolean",
+      "default": true
+    },
+    "quiet_hours_start": {
+      "type": "string"
+    },
+    "quiet_hours_end": {
+      "type": "string"
+    },
+    "max_replies_per_hour": {
+      "type": "integer",
+      "default": 20
+    },
+    "min_confidence": {
+      "type": "number",
+      "default": 0.7
+    },
+    "ppv_allowed": {
+      "type": "boolean",
+      "default": false
+    },
+    "max_ppv_cents": {
+      "type": "integer",
+      "default": 1000
+    }
+  },
+  "required": [
+    "creator_profile_id"
+  ]
+}

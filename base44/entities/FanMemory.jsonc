@@ -1,0 +1,34 @@
+{
+  "name": "FanMemory",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "fan_id": {
+      "type": "string"
+    },
+    "memory_key": {
+      "type": "string"
+    },
+    "memory_value": {
+      "type": "string"
+    },
+    "confidence": {
+      "type": "number",
+      "default": 0.5
+    },
+    "source_message_uuid": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "creator_profile_id",
+    "fan_id",
+    "memory_key",
+    "memory_value"
+  ]
+}

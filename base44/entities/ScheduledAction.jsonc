@@ -1,0 +1,42 @@
+{
+  "name": "ScheduledAction",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "mass_message",
+        "fan_message",
+        "post"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "scheduled_for": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "sent",
+        "cancelled",
+        "failed"
+      ],
+      "default": "pending"
+    }
+  },
+  "required": [
+    "creator_profile_id",
+    "action_type",
+    "scheduled_for"
+  ]
+}

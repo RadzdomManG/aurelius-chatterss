@@ -1,0 +1,46 @@
+{
+  "name": "CreatorProfile",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "username": {
+      "type": "string"
+    },
+    "avatar_url": {
+      "type": "string"
+    },
+    "fanvue_user_uuid": {
+      "type": "string"
+    },
+    "timezone": {
+      "type": "string",
+      "default": "UTC"
+    },
+    "automation_mode": {
+      "type": "string",
+      "enum": [
+        "off",
+        "draft",
+        "full_auto"
+      ],
+      "default": "off"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "error"
+      ],
+      "default": "active"
+    }
+  },
+  "required": [
+    "display_name"
+  ]
+}

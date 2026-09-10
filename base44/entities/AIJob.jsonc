@@ -1,0 +1,44 @@
+{
+  "name": "AIJob",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "conversation_id": {
+      "type": "string"
+    },
+    "trigger_message_uuid": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "processing",
+        "completed",
+        "failed",
+        "cancelled",
+        "needs_approval"
+      ],
+      "default": "pending"
+    },
+    "attempts": {
+      "type": "integer",
+      "default": 0
+    },
+    "locked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "conversation_id"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "PersonaProfile",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "instructions": {
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "creator_profile_id",
+    "display_name"
+  ]
+}

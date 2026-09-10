@@ -1,0 +1,51 @@
+{
+  "name": "Conversation",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string"
+    },
+    "creator_profile_id": {
+      "type": "string"
+    },
+    "fan_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "archived",
+        "pending"
+      ],
+      "default": "active"
+    },
+    "automation_mode_override": {
+      "type": "string"
+    },
+    "unread_count": {
+      "type": "integer",
+      "default": 0
+    },
+    "last_message_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_message_preview": {
+      "type": "string"
+    },
+    "last_sender_type": {
+      "type": "string",
+      "enum": [
+        "fan",
+        "creator",
+        "ai",
+        "system"
+      ]
+    }
+  },
+  "required": [
+    "creator_profile_id",
+    "fan_id"
+  ]
+}
