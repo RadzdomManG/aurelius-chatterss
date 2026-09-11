@@ -16,12 +16,6 @@
       "type": "boolean",
       "default": true
     },
-    "quiet_hours_start": {
-      "type": "string"
-    },
-    "quiet_hours_end": {
-      "type": "string"
-    },
     "max_replies_per_hour": {
       "type": "integer",
       "default": 20
@@ -36,11 +30,59 @@
     },
     "max_ppv_cents": {
       "type": "integer",
-      "default": 1000
+      "default": 9000
     },
     "default_ppv_cents": {
       "type": "integer",
-      "default": 1200
+      "default": 1000
+    },
+    "ppv_ladder_enabled": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "default": [
+        1000,
+        1500,
+        2500,
+        3500,
+        5000,
+        7000,
+        9000
+      ]
+    },
+    "runner_interval_seconds": {
+      "type": "integer",
+      "default": 30
+    },
+    "runner_status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "paused",
+        "stopped"
+      ],
+      "default": "stopped"
+    },
+    "runner_last_run_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runner_next_run_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runner_jobs_checked": {
+      "type": "integer",
+      "default": 0
+    },
+    "runner_jobs_recovered": {
+      "type": "integer",
+      "default": 0
+    },
+    "runner_errors": {
+      "type": "integer",
+      "default": 0
     }
   },
   "required": [
