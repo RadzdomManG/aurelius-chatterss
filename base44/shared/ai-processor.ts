@@ -249,7 +249,8 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     base44.asServiceRole.entities.PersonaProfile.filter({ creator_profile_id: creatorProfileId, active: true }, "-updated_date", 1),
     base44.asServiceRole.entities.Fan.filter({ id: conversation.fan_id }, "-created_date", 1),
     base44.asServiceRole.entities.FanMemory.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "-created_date", 30),
-    base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "created_date", 30),
+    // Fetch the newest window first; it is normalized to chronological order below.
+    base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "-created_date", 30),
     base44.asServiceRole.entities.AutomationSettings.filter({ creator_profile_id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.FanvueConnection.filter({ creator_profile_id: creatorProfileId, status: "connected" }, "-created_date", 1),
   ]);
