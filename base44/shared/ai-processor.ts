@@ -222,6 +222,25 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   const conversation = await base44.asServiceRole.entities.Conversation.get(conversationId);
   if (!conversation) throw new Error("Conversation not found");
 
+  // Every inbound message pre-creates a pending job. Any intentional early
+  // exit must close that job, otherwise the watchdog retries it forever.
+  const skipJob = async (reason: string) => {
+    if (jobId) {
+      try {
+        await base44.asServiceRole.entities.AIJob.update(jobId, {
+          status: "cancelled",
+          stage: "completed",
+          locked_at: null,
+          locked_by: null,
+          last_error: reason,
+        });
+      } catch (e) {
+        console.error("[ai] Failed to finalize skipped job:", jobId, reason, (e as any).message);
+      }
+    }
+    return { skipped: true, reason };
+  };
+
   const creatorProfileId = conversation.creator_profile_id;
 
   // Load all context in parallel
@@ -243,21 +262,21 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
 
   // === SINGLE CANONICAL MODE RESOLVER ===
   const autoMode = resolveAutomationMode(creator, conversation, settings);
-  if (autoMode === "STOPPED") return { skipped: true, reason: "AUTOMATION_STOPPED" };
-  if (!persona) return { skipped: true, reason: "PERSONA_NOT_FOUND" };
-  if (!connection) return { skipped: true, reason: "FANVUE_CONTACTABILITY" };
-  if (fan?.automation_paused) return { skipped: true, reason: "FAN_PAUSED" };
-  if (conversation.status === "archived") return { skipped: true, reason: "CONVERSATION_PAUSED" };
+  if (autoMode === "STOPPED") return await skipJob("AUTOMATION_STOPPED");
+  if (!persona) return await skipJob("PERSONA_NOT_FOUND");
+  if (!connection) return await skipJob("FANVUE_CONTACTABILITY");
+  if (fan?.automation_paused) return await skipJob("FAN_PAUSED");
+  if (conversation.status === "archived") return await skipJob("CONVERSATION_PAUSED");
 
   // Find the latest fan message
   const fanMessages = recentMsgs.filter((m: any) => m.sender_type === "fan");
   const lastFanMessage = fanMessages[fanMessages.length - 1];
-  if (!lastFanMessage) return { skipped: true, reason: "No fan message to respond to" };
+  if (!lastFanMessage) return await skipJob("NO_FAN_MESSAGE");
 
   // === BURST HANDLING ===
   if (triggerMessageUuid && lastFanMessage.external_uuid) {
     if (triggerMessageUuid !== lastFanMessage.external_uuid && triggerMessageUuid !== lastFanMessage.id) {
-      return { skipped: true, reason: "SUPERSEDED_BY_NEWER_FAN_MESSAGE" };
+      return await skipJob("SUPERSEDED_BY_NEWER_FAN_MESSAGE");
     }
   }
 
@@ -265,7 +284,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   const lastMessage = recentMsgs[recentMsgs.length - 1];
   if (lastMessage && (lastMessage.sender_type === "creator" || lastMessage.source === "ai") &&
       new Date(lastMessage.created_date) > new Date(lastFanMessage.created_date)) {
-    return { skipped: true, reason: "LATEST_MESSAGE_IS_CREATOR" };
+    return await skipJob("LATEST_MESSAGE_IS_CREATOR");
   }
 
   // === IDEMPOTENCY: exclude the current job when checking for duplicates ===
@@ -279,7 +298,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
       j.id !== jobId &&
       ["processing", "completed", "needs_approval"].includes(j.status)
     );
-    if (activeJob) return { skipped: true, reason: "DUPLICATE_JOB" };
+    if (activeJob) return await skipJob("DUPLICATE_JOB");
 
     // Post-creation cleanup: cancel any OTHER pending/processing jobs with same trigger
     const staleJobs = existingJobs.filter((j: any) =>
