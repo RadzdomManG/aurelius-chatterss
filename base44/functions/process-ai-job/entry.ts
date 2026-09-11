@@ -22,7 +22,7 @@ export default async function(req) {
       isServiceRole = true;
     }
 
-    const { conversationId, jobId } = parsedBody;
+    const { conversationId, jobId, triggerMessageUuid } = parsedBody;
     if (!conversationId && !jobId) {
       return Response.json({ error: "conversationId or jobId is required" }, { status: 400 });
     }
@@ -30,16 +30,18 @@ export default async function(req) {
     // If only jobId is provided, resolve conversationId from the job record
     // so processAIJob can load the conversation.
     let resolvedConversationId = conversationId;
-    if (!resolvedConversationId && jobId) {
+    let resolvedTriggerMessageUuid = triggerMessageUuid || null;
+    if (jobId && (!resolvedConversationId || !resolvedTriggerMessageUuid)) {
       try {
         const job = await base44.asServiceRole.entities.AIJob.get(jobId);
-        resolvedConversationId = job.conversation_id;
+        resolvedConversationId = resolvedConversationId || job.conversation_id;
+        resolvedTriggerMessageUuid = resolvedTriggerMessageUuid || job.trigger_message_uuid || null;
       } catch (e) {
         return Response.json({ error: "Job not found" }, { status: 404 });
       }
     }
 
-    const result = await processAIJob(base44, resolvedConversationId, jobId, null);
+    const result = await processAIJob(base44, resolvedConversationId, jobId, resolvedTriggerMessageUuid);
 
     return Response.json({ success: true, ...result });
   } catch (error) {
