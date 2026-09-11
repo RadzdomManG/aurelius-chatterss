@@ -41,8 +41,8 @@ export default async function(req) {
       }
     }
 
-    // The shared processor fetches authoritative latest-message records plus
-    // a normalized context window before deciding whether a job was superseded.
+    // The shared processor resolves the exact triggering message UUID and
+    // uses a normalized recent window only for conversation context.
     const result = await processAIJob(base44, resolvedConversationId, jobId, resolvedTriggerMessageUuid);
 
     return Response.json({ success: true, ...result });
