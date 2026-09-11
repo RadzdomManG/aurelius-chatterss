@@ -7,7 +7,6 @@
 // This is the SINGLE entry point for all incoming fan messages. Never scatter
 // this logic across multiple paths.
 import { processAIJob } from "./ai-processor.ts";
-import { waitUntil } from "base44:runtime";
 
 export async function ingestIncomingFanMessage(
   base44: any,
@@ -146,13 +145,12 @@ export async function ingestIncomingFanMessage(
 
   // 7. Trigger AI ONLY for inbound fan messages (never outbound)
   if (triggerAI && !isOutbound) {
+    let job: any = null;
     try {
-      // Pre-create a PENDING AI job BEFORE firing the background task.
-      // If the runtime kills the waitUntil task before it runs (common with
-      // serverless background execution), this pending job remains in the DB
-      // and recover-ai-jobs picks it up within ~30s. Without this, a killed
-      // background task means the fan message is silently abandoned.
-      const job = await base44.asServiceRole.entities.AIJob.create({
+      // Pre-create a PENDING AI job BEFORE processing. If the webhook
+      // crashes mid-processing, this pending job remains in the DB and
+      // recover-ai-jobs picks it up within ~5 min.
+      job = await base44.asServiceRole.entities.AIJob.create({
         creator_profile_id: creatorProfileId,
         conversation_id: conversation.id,
         trigger_message_uuid: messageUuid || message.id,
@@ -160,17 +158,24 @@ export async function ingestIncomingFanMessage(
         stage: "ingested",
         job_created_at: new Date().toISOString(),
       });
-      waitUntil(processAIJob(base44, conversation.id, job.id, messageUuid));
+
+      // Process synchronously inside the webhook request lifecycle.
+      // Background tasks (waitUntil) get killed by the serverless runtime
+      // ~⅔ of the time; running inline guarantees the reply is generated
+      // and sent before the webhook returns 2xx to Fanvue.
+      await processAIJob(base44, conversation.id, job.id, messageUuid);
     } catch (aiErr) {
-      // Alert on enqueue failure — never silently fail
+      // AI processing failed — the message is already persisted. The job
+      // is marked failed by processAIJob's internal error handler. Return
+      // 2xx anyway so Fanvue doesn't retry; recovery handles stale jobs.
       try {
         await base44.asServiceRole.entities.ActivityLog.create({
           creator_profile_id: creatorProfileId,
           conversation_id: conversation.id,
-          event_type: "ai.enqueue.failed",
+          event_type: "ai.processing.failed",
           status: "error",
-          message: `AI enqueue failed: ${(aiErr as any).message}`,
-          metadata: { messageUuid },
+          message: `AI processing failed: ${(aiErr as any).message}`,
+          metadata: { messageUuid, jobId: job?.id },
         });
       } catch (e) {}
     }

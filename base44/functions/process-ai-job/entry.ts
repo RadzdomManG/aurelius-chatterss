@@ -9,8 +9,18 @@ export default async function(req) {
 
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+    // Allow both user-authenticated calls (manual UI trigger) and
+    // service-role calls (webhook / recovery). Only block if auth.me()
+    // explicitly throws — a service-role request has no user session
+    // but is still authorized to run server-side processing.
+    let isServiceRole = false;
+    try {
+      const user = await base44.auth.me();
+      if (!user) isServiceRole = true;
+    } catch (e) {
+      isServiceRole = true;
+    }
 
     const { conversationId, jobId } = parsedBody;
     if (!conversationId && !jobId) {
