@@ -260,6 +260,16 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   const settings = automationSettings[0] || {};
   const connection = connections[0];
 
+  // Base44 query ordering is not guaranteed consistently across SDK/runtime
+  // versions. Normalize locally so index 0 is oldest and the final item is
+  // always the true latest message used by supersession and reply checks.
+  recentMsgs.sort((a: any, b: any) => {
+    const aTime = new Date(a.created_date || a.sent_at || 0).getTime();
+    const bTime = new Date(b.created_date || b.sent_at || 0).getTime();
+    if (aTime !== bTime) return aTime - bTime;
+    return String(a.id || "").localeCompare(String(b.id || ""));
+  });
+
   // === SINGLE CANONICAL MODE RESOLVER ===
   const autoMode = resolveAutomationMode(creator, conversation, settings);
   if (autoMode === "STOPPED") return await skipJob("AUTOMATION_STOPPED");
