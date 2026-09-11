@@ -214,9 +214,11 @@ const AI_JSON_SCHEMA = {
 export async function processAIJob(base44: any, conversationId: string, jobId: string | null = null, triggerMessageUuid: string | null = null) {
   const now = new Date().toISOString();
 
-  // Burst delay: let rapid fan messages accumulate before processing.
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-
+  // NOTE: The 2-second burst delay was removed. Burst/supersession handling
+  // is now deterministic — see the "SUPERSEDED_BY_NEWER_FAN_MESSAGE" check
+  // below, which skips this job if a newer fan message arrived. The delay
+  // previously caused the serverless runtime to kill the background task
+  // before the job was ever created.
   const conversation = await base44.asServiceRole.entities.Conversation.get(conversationId);
   if (!conversation) throw new Error("Conversation not found");
 
@@ -596,12 +598,25 @@ Analyze the conversation, then write your reply as the creator. Stay fully in ch
             mediaUuids: defaultMediaUuids,
             mediaPreviewUuid: defaultMediaUuids[0],
           };
+          // Update conversation PPV offer tracking
+          await base44.asServiceRole.entities.Conversation.update(conversationId, {
+            last_ppv_offer_at: new Date().toISOString(),
+            ppv_offer_count: (conversation.ppv_offer_count || 0) + 1,
+          });
+        } else {
+          // No vault media available — Fanvue rejects PPV sends with no media
+          // ("not possible to send a pay-to-view message with no media attached").
+          // Downgrade to a free message so the reply still goes through.
+          ppvCents = null;
+          await base44.asServiceRole.entities.ActivityLog.create({
+            creator_profile_id: creatorProfileId,
+            conversation_id: conversationId,
+            event_type: "ai.ppv_no_media_downgrade",
+            status: "warning",
+            message: `PPV offer downgraded to free message — no vault media available`,
+            metadata: { job_id: job.id },
+          });
         }
-        // Update conversation PPV offer tracking
-        await base44.asServiceRole.entities.Conversation.update(conversationId, {
-          last_ppv_offer_at: new Date().toISOString(),
-          ppv_offer_count: (conversation.ppv_offer_count || 0) + 1,
-        });
       }
 
       // === SEND VIA FANVUE WITH RETRY ===

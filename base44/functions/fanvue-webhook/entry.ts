@@ -20,6 +20,12 @@ const OUTBOUND_EVENTS = new Set(["message.sent", "creator.message.sent", "creato
 const DELETE_EVENTS = new Set(["creator.message.deleted", "message.deleted"]);
 const READ_EVENTS = new Set(["creator.message.read", "creator.message.read_by_fan", "message.read"]);
 
+// Fanvue delivers every message event in BOTH the creator.* and legacy message.*
+// formats simultaneously (~4ms apart). Both carry the same message UUID. Processing
+// both causes a race condition that double-persists the message. Skip the legacy
+// format entirely — the creator.* variant carries richer data and is always sent.
+const LEGACY_DUPLICATE_EVENTS = new Set(["message.received", "message.sent"]);
+
 function getHeader(req: any, name: string): string | null {
   try {
     const direct = req.headers?.get?.(name);
@@ -310,6 +316,25 @@ export default async function (req: Request): Promise<Response> {
   try {
     const event = parsed || JSON.parse(rawBody);
     const eventType = detectEventType(req, event);
+
+    // Skip legacy message.* events — the creator.* equivalent is always sent
+    // and carries the same data. Processing both causes duplicate messages.
+    if (LEGACY_DUPLICATE_EVENTS.has(eventType)) {
+      waitUntil(
+        (async () => {
+          try {
+            const b = createClientFromRequest(req);
+            await b.asServiceRole.entities.ActivityLog.create({
+              event_type: "webhook.duplicate_ignored",
+              status: "info",
+              message: `Skipped legacy ${eventType} (creator.* variant handles it)`,
+              metadata: { eventType },
+            });
+          } catch (e) {}
+        })()
+      );
+      return Response.json({ received: true, verified: true, eventType, skipped: "legacy_duplicate" });
+    }
 
     if (INBOUND_EVENTS.has(eventType) || OUTBOUND_EVENTS.has(eventType)) {
       const base44 = createClientFromRequest(req);

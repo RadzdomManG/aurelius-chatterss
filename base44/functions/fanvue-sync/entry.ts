@@ -1,6 +1,26 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
 import { getValidAccessToken, getChats, getMessages, getMe, sleep } from "../../shared/fanvue-api.ts";
 
+// Chunk bulk operations to stay under the platform's 500-item limit.
+// Processes sequentially so a single chunk failure doesn't lose all progress.
+async function bulkCreateChunked(entity: any, items: any[], chunkSize = 450) {
+  if (!items.length) return [];
+  const results: any[] = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const created = await entity.bulkCreate(chunk);
+    if (Array.isArray(created)) results.push(...created);
+  }
+  return results;
+}
+
+async function bulkUpdateChunked(entity: any, items: any[], chunkSize = 450) {
+  if (!items.length) return;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    await entity.bulkUpdate(items.slice(i, i + chunkSize));
+  }
+}
+
 export default async function(req) {
   let parsedBody = {};
   try {
@@ -129,13 +149,13 @@ export default async function(req) {
         totalChats++;
       }
 
-      // Batch create + update fans
+      // Batch create + update fans (chunked to stay under the 500-item limit)
       if (fansToCreate.length > 0) {
-        const created = await base44.asServiceRole.entities.Fan.bulkCreate(fansToCreate);
+        const created = await bulkCreateChunked(base44.asServiceRole.entities.Fan, fansToCreate);
         created.forEach((f) => fanByUuid.set(f.external_uuid, f));
       }
       if (fansToUpdate.length > 0) {
-        await base44.asServiceRole.entities.Fan.bulkUpdate(fansToUpdate);
+        await bulkUpdateChunked(base44.asServiceRole.entities.Fan, fansToUpdate);
       }
 
       // Build conversations from the same in-memory list (fans now have IDs — no second API walk)
@@ -169,11 +189,11 @@ export default async function(req) {
       }
 
       if (convosToCreate.length > 0) {
-        const createdConvos = await base44.asServiceRole.entities.Conversation.bulkCreate(convosToCreate);
+        const createdConvos = await bulkCreateChunked(base44.asServiceRole.entities.Conversation, convosToCreate);
         createdConvos.forEach((c) => convoByFanId.set(c.fan_id, c));
       }
       if (convosToUpdate.length > 0) {
-        await base44.asServiceRole.entities.Conversation.bulkUpdate(convosToUpdate);
+        await bulkUpdateChunked(base44.asServiceRole.entities.Conversation, convosToUpdate);
       }
     } else {
       // messagesOnly mode: populate chatFanUuids from existing conversations
@@ -226,12 +246,9 @@ export default async function(req) {
         processed++;
       }
 
-      // Batch create messages in chunks
+      // Batch create messages (chunked to stay under the 500-item limit)
       if (messagesToCreate.length > 0) {
-        const chunkSize = 100;
-        for (let i = 0; i < messagesToCreate.length; i += chunkSize) {
-          await base44.asServiceRole.entities.Message.bulkCreate(messagesToCreate.slice(i, i + chunkSize));
-        }
+        await bulkCreateChunked(base44.asServiceRole.entities.Message, messagesToCreate, 100);
       }
     }
 

@@ -147,7 +147,20 @@ export async function ingestIncomingFanMessage(
   // 7. Trigger AI ONLY for inbound fan messages (never outbound)
   if (triggerAI && !isOutbound) {
     try {
-      waitUntil(processAIJob(base44, conversation.id, null, messageUuid));
+      // Pre-create a PENDING AI job BEFORE firing the background task.
+      // If the runtime kills the waitUntil task before it runs (common with
+      // serverless background execution), this pending job remains in the DB
+      // and recover-ai-jobs picks it up within ~30s. Without this, a killed
+      // background task means the fan message is silently abandoned.
+      const job = await base44.asServiceRole.entities.AIJob.create({
+        creator_profile_id: creatorProfileId,
+        conversation_id: conversation.id,
+        trigger_message_uuid: messageUuid || message.id,
+        status: "pending",
+        stage: "ingested",
+        job_created_at: new Date().toISOString(),
+      });
+      waitUntil(processAIJob(base44, conversation.id, job.id, messageUuid));
     } catch (aiErr) {
       // Alert on enqueue failure — never silently fail
       try {
