@@ -1,6 +1,7 @@
-import { Toaster } from "@/components/ui/toaster"
-import { QueryClientProvider } from '@tanstack/react-query'
-import { queryClientInstance } from '@/lib/query-client'
+import React, { lazy, Suspense } from "react";
+import { Toaster } from "@/components/ui/toaster";
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClientInstance } from '@/lib/query-client';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -8,30 +9,53 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ScrollToTop from './components/ScrollToTop';
 import { ThemeProvider } from 'next-themes';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import ErrorBoundary, { DefaultFallback } from '@/components/ErrorBoundary';
+import { Toaster as SonnerToaster } from 'sonner';
+
+// Core pages — eager (landing + primary flows)
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
 import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
+import FanvueCallback from '@/pages/FanvueCallback';
+import AppShell from '@/components/AppShell';
 import Inbox from '@/pages/Inbox';
 import Models from '@/pages/Models';
 import ModelWorkspace from '@/pages/ModelWorkspace';
 import Automation from '@/pages/Automation';
-import Media from '@/pages/Media';
-import Playground from '@/pages/Playground';
-import Analytics from '@/pages/Analytics';
-import Activity from '@/pages/Activity';
-import Diagnostics from '@/pages/Diagnostics';
-import Settings from '@/pages/Settings';
-import FanvueCallback from '@/pages/FanvueCallback';
-import CalendarPage from '@/pages/Calendar';
-import MassMessages from '@/pages/MassMessages';
-import Posts from '@/pages/Posts';
-import Notifications from '@/pages/Notifications';
-import Subscribers from '@/pages/Subscribers';
-import Templates from '@/pages/Templates';
-import Webhooks from '@/pages/Webhooks';
-import AppShell from '@/components/AppShell';
-import { Toaster as SonnerToaster } from 'sonner';
+
+// Heavy / secondary pages — lazy loaded for crash isolation + smaller initial bundle
+const CalendarPage = lazy(() => import('@/pages/Calendar'));
+const MassMessages = lazy(() => import('@/pages/MassMessages'));
+const Posts = lazy(() => import('@/pages/Posts'));
+const Notifications = lazy(() => import('@/pages/Notifications'));
+const Subscribers = lazy(() => import('@/pages/Subscribers'));
+const Media = lazy(() => import('@/pages/Media'));
+const Playground = lazy(() => import('@/pages/Playground'));
+const Templates = lazy(() => import('@/pages/Templates'));
+const Webhooks = lazy(() => import('@/pages/Webhooks'));
+const Analytics = lazy(() => import('@/pages/Analytics'));
+const Activity = lazy(() => import('@/pages/Activity'));
+const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
+const Settings = lazy(() => import('@/pages/Settings'));
+
+function PageSkeleton() {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+    </div>
+  );
+}
+
+// Per-route isolation: a crash in one page shows a recoverable fallback
+// instead of a blank black screen, and never kills sibling routes.
+function PageWrapper({ children }) {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<PageSkeleton />}>{children}</Suspense>
+    </ErrorBoundary>
+  );
+}
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -55,30 +79,30 @@ const AuthenticatedApp = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/fanvue/callback" element={<FanvueCallback />} />
+      <Route path="/login" element={<PageWrapper><Login /></PageWrapper>} />
+      <Route path="/register" element={<PageWrapper><Register /></PageWrapper>} />
+      <Route path="/forgot-password" element={<PageWrapper><ForgotPassword /></PageWrapper>} />
+      <Route path="/reset-password" element={<PageWrapper><ResetPassword /></PageWrapper>} />
+      <Route path="/fanvue/callback" element={<PageWrapper><FanvueCallback /></PageWrapper>} />
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppShell />}>
-          <Route path="/" element={<Inbox />} />
-          <Route path="/models" element={<Models />} />
-          <Route path="/models/:creatorProfileId" element={<ModelWorkspace />} />
-          <Route path="/automation" element={<Automation />} />
-          <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/mass-messages" element={<MassMessages />} />
-          <Route path="/posts" element={<Posts />} />
-          <Route path="/notifications" element={<Notifications />} />
-          <Route path="/subscribers" element={<Subscribers />} />
-          <Route path="/templates" element={<Templates />} />
-          <Route path="/webhooks" element={<Webhooks />} />
-          <Route path="/media" element={<Media />} />
-          <Route path="/playground" element={<Playground />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/activity" element={<Activity />} />
-          <Route path="/diagnostics" element={<Diagnostics />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/" element={<PageWrapper><Inbox /></PageWrapper>} />
+          <Route path="/models" element={<PageWrapper><Models /></PageWrapper>} />
+          <Route path="/models/:creatorProfileId" element={<PageWrapper><ModelWorkspace /></PageWrapper>} />
+          <Route path="/automation" element={<PageWrapper><Automation /></PageWrapper>} />
+          <Route path="/calendar" element={<PageWrapper><CalendarPage /></PageWrapper>} />
+          <Route path="/mass-messages" element={<PageWrapper><MassMessages /></PageWrapper>} />
+          <Route path="/posts" element={<PageWrapper><Posts /></PageWrapper>} />
+          <Route path="/notifications" element={<PageWrapper><Notifications /></PageWrapper>} />
+          <Route path="/subscribers" element={<PageWrapper><Subscribers /></PageWrapper>} />
+          <Route path="/media" element={<PageWrapper><Media /></PageWrapper>} />
+          <Route path="/playground" element={<PageWrapper><Playground /></PageWrapper>} />
+          <Route path="/templates" element={<PageWrapper><Templates /></PageWrapper>} />
+          <Route path="/webhooks" element={<PageWrapper><Webhooks /></PageWrapper>} />
+          <Route path="/analytics" element={<PageWrapper><Analytics /></PageWrapper>} />
+          <Route path="/activity" element={<PageWrapper><Activity /></PageWrapper>} />
+          <Route path="/diagnostics" element={<PageWrapper><Diagnostics /></PageWrapper>} />
+          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />
@@ -93,7 +117,13 @@ function App() {
         <QueryClientProvider client={queryClientInstance}>
           <Router>
             <ScrollToTop />
-            <AuthenticatedApp />
+            <ErrorBoundary fallback={({ error, errorId, reset }) => (
+              <div className="fixed inset-0">
+                <DefaultFallback error={error} errorId={errorId} reset={reset} />
+              </div>
+            )}>
+              <AuthenticatedApp />
+            </ErrorBoundary>
           </Router>
           <Toaster />
           <SonnerToaster position="bottom-right" theme="system" richColors />

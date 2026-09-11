@@ -57,7 +57,7 @@ export default async function(req) {
     const existingFans = await base44.asServiceRole.entities.Fan.filter(
       { creator_profile_id: creatorProfileIdFinal },
       "-created_date",
-      500
+      5000
     );
     const fanByUuid = new Map();
     existingFans.forEach((f) => fanByUuid.set(f.external_uuid, f));
@@ -65,7 +65,7 @@ export default async function(req) {
     const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
       { creator_profile_id: creatorProfileIdFinal },
       "-created_date",
-      500
+      5000
     );
     const convoByFanId = new Map();
     existingConvos.forEach((c) => convoByFanId.set(c.fan_id, c));
@@ -73,7 +73,7 @@ export default async function(req) {
     const existingMsgs = await base44.asServiceRole.entities.Message.filter(
       { creator_profile_id: creatorProfileIdFinal },
       "-created_date",
-      500
+      5000
     );
     const msgUuidSet = new Set();
     existingMsgs.forEach((m) => { if (m.external_uuid) msgUuidSet.add(m.external_uuid); });
