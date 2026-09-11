@@ -3,7 +3,7 @@
 //
 // Duties:
 // 1. Recover stuck "processing" jobs (stale lock > 2 min)
-// 2. Recover stale "pending" jobs (> 1 min)
+// 2. Recover stale "pending" jobs (> 15 seconds)
 // 3. Cancel duplicate jobs (same trigger_message_uuid — keep one, cancel rest)
 // 4. Re-evaluate "needs_approval" jobs: if the conversation is AUTO mode,
 //    re-run them so they auto-send (fixes the needs_approval-in-auto bug)
