@@ -232,7 +232,7 @@ const AI_JSON_SCHEMA = {
         next_goal: { type: "string" },
       },
     },
-    reply: { type: "string" },
+    replies: { type: "array", items: { type: "string" }, description: "1-3 short chat bubbles. Each bubble is ONE single line with NO line breaks. React first, then build. If offering PPV, put the offer in the LAST bubble." },
     confidence: { type: "number" },
     intent: { type: "string" },
     sentiment: { type: "string" },
@@ -474,15 +474,45 @@ Before writing your reply, analyze the conversation:
 
 Your reply should feel like one person naturally continuing a conversation — NOT an isolated Q&A response.
 
-=== NATURAL RESPONSE STRUCTURE ===
-A good reply may include some of:
-- Direct reaction to the fan's newest message
-- A callback to something the fan said earlier (use memory)
-- Persona-consistent self-expression
-- Natural topic continuation or a topic bridge
-- A fresh question ONLY when it flows naturally
-- Sales progression ONLY when the moment is right
-Do NOT force all elements into every reply. Do NOT always end with a question. Sometimes react, make a statement, tease, or continue the topic without asking anything.
+=== YOUR VOICE & STYLE (FOLLOW EXACTLY) ===
+You sound like a REAL girl texting late at night — casual, lowercase, slang, minimal punctuation (just ellipses and emojis). Never scripted, never formal, never "customer service". Keep the soft GFE feeling even when you get dirty.
+
+Conversation flow:
+- React first, then build. Bubble 1 reacts to what he said; bubble 2 escalates.
+- Build soft -> teasing -> raw and explicit as heat grows. Match his energy.
+- End most messages with a question to keep the chat going — but sometimes DON'T (feels more natural).
+- PPV teasing feels like sharing something private and dirty — NEVER sound like you're selling.
+
+BUBBLE RULES (CRITICAL):
+- NEVER press enter inside a bubble. Each bubble is ONE single line, no line breaks.
+- Split into 1-3 short separate bubbles instead of one long message.
+- Keep bubbles short and punchy like real texting.
+- If you offer PPV, put the offer in the LAST bubble.
+
+When turned on, be raw and detailed (match this tone, vary the wording — don't copy verbatim):
+- "fuck… my pussy is already so wet just from talking to you"
+- "i keep rubbing my clit and thinking about your cock"
+- "i just slid two fingers inside… they're so slippery"
+- "my nipples are so hard… i keep pinching them while i touch my pussy"
+- "fuck i just came a little… my legs are shaking"
+- "i wish you could fuck me stupid rn"
+
+PPV teasing (dirty, never salesy — match the vibe):
+- "i just filmed myself rubbing my wet pussy thinking about you…"
+- "it's so messy and i'm kinda embarrassed but… want to see?"
+- "my fingers are still shiny… should i send it?"
+After unlock:
+- "omg you actually unlocked it 😳"
+- "i feel so exposed… did you like seeing my pussy like that?"
+- "got carried away after and filmed another one… even dirtier. want it?"
+
+Building heat:
+- "you're making me feel things rn…"
+- "my pussy is starting to get wet just from your messages 😳"
+- "trying not to touch myself but it's hard… you making me this wet on purpose?"
+
+=== RESPONSE STRUCTURE ===
+Pick from as natural: direct reaction, callback to something he said (use memory), persona self-expression, topic continuation, a fresh question only when it flows, escalation/PPV only when heat is real. Do NOT force every element. Do NOT always end with a question.
 ${tooManyQuestions ? "\nIMPORTANT: You have asked a question in your last several replies. This time, do NOT ask a question — make a statement, share something, or react instead." : ""}
 
 === MEMORY USAGE ===
@@ -514,7 +544,7 @@ ${ppvAllowed ? `- Offer PPV ONLY when the fan is clearly turned on / horny (heat
 Respond ONLY with a JSON object:
 {
   "conversation_analysis": { "current_topic": "...", "fan_sentiment": "...", "rapport_level": "new/warming/established/close", "open_loops": "...", "next_goal": "..." },
-  "reply": "your reply as the creator",
+  "replies": ["bubble 1", "bubble 2 (optional, 1-3 bubbles, no line breaks inside a bubble)"],
   "confidence": 0.0-1.0,
   "intent": "conversation/engagement/sales/support",
   "sentiment": "positive/neutral/apologetic/playful",
@@ -537,7 +567,7 @@ ${conversationContext || "No prior messages."}
 NEW FAN MESSAGE:
 ${lastFanMessage.body || "[media only]"}
 
-Analyze the conversation, then write your reply as the creator. Stay fully in character.`;
+Analyze the conversation, then write your replies as 1-3 short bubbles (no line breaks inside a bubble). Stay fully in character.`;
 
     // === AI GENERATION ===
     await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "ai_generating" });
@@ -553,9 +583,16 @@ Analyze the conversation, then write your reply as the creator. Stay fully in ch
       });
     }
 
-    if (!aiResult.reply || typeof aiResult.reply !== "string") {
+    // Normalize to an array of single-line bubbles (no line breaks inside a bubble)
+    let replies = Array.isArray(aiResult.replies)
+      ? aiResult.replies
+      : (typeof aiResult.reply === "string" ? [aiResult.reply] : []);
+    replies = replies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+    if (replies.length === 0) {
       throw new Error("AI_INVALID: No reply generated");
     }
+    const replyText = replies.join(" ");
+    aiResult.replies = replies;
 
     await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "ai_generated", ai_completed_at: new Date().toISOString() });
 
@@ -605,17 +642,22 @@ Analyze the conversation, then write your reply as the creator. Stay fully in ch
     }
 
     // === ANTI-REPETITION + EMOJI VALIDATION (regenerate once) ===
-    const isRep = isRepetitive(aiResult.reply, recentCreatorMsgs);
-    const isEmojiRep = hasRepetitiveEmoji(aiResult.reply, recentEmojis);
+    const isRep = isRepetitive(replyText, recentCreatorMsgs);
+    const isEmojiRep = hasRepetitiveEmoji(replyText, recentEmojis);
     if (isRep || isEmojiRep) {
       await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "anti_repetition" });
       try {
         const fixReason = isRep ? "REPETITIVE_TEXT_PATTERN" : "REPETITIVE_EMOJI_PATTERN";
         const antiPrompt = userPrompt + `\n\nIMPORTANT: Your previous reply was flagged as ${fixReason}. Write a completely fresh response with different wording, a different opening, and ${isEmojiRep ? "different emoji (or no emoji)" : "varied emoji"}. Do not repeat activities, stories, or questions you have used before.\n\nBANNED PHRASES (do NOT reuse any of these — they appeared in recent replies): ${bannedStr}`;
         const regen = await callGrok(systemPrompt, antiPrompt, AI_JSON_SCHEMA);
-        if (regen && regen.reply) {
-          if (!isRepetitive(regen.reply, recentCreatorMsgs) && !hasRepetitiveEmoji(regen.reply, recentEmojis)) {
+        const regenReplies = Array.isArray(regen?.replies)
+          ? regen.replies
+          : (typeof regen?.reply === "string" ? [regen.reply] : []);
+        const regenText = regenReplies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ");
+        if (regenText) {
+          if (!isRepetitive(regenText, recentCreatorMsgs) && !hasRepetitiveEmoji(regenText, recentEmojis)) {
             aiResult = regen;
+            replies = regenReplies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean);
             if (ppvAllowed && aiResult.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
               ppvCents = validatePpvCents(aiResult.suggested_ppv_cents, settings);
             }
@@ -643,7 +685,7 @@ Analyze the conversation, then write your reply as the creator. Stay fully in ch
       if (rateLimited) {
         await base44.asServiceRole.entities.AIJob.update(job.id, {
           status: "completed",
-          reply_text: aiResult.reply,
+          reply_text: replyText,
           confidence: aiResult.confidence,
           stage: "completed",
           ai_completed_at: new Date().toISOString(),
@@ -692,50 +734,44 @@ Analyze the conversation, then write your reply as the creator. Stay fully in ch
         }
       }
 
-      // === SEND VIA FANVUE WITH RETRY ===
+      // === SEND VIA FANVUE WITH RETRY (multi-bubble) ===
       await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "sending", attached_media_uuids: attachedMediaUuids });
 
       const accessToken = await getValidAccessToken(connection, base44);
-      const result = await sendWithRetry(accessToken, fan.external_uuid, aiResult.reply, ppvCents, mediaForSend);
-
-      // Dedup: if the send returned a message UUID, check for existing local message
-      const sentUuid = result.messageUuid || result.uuid || null;
-      if (sentUuid) {
-        const existingSent = await base44.asServiceRole.entities.Message.filter({ external_uuid: sentUuid }, "-created_date", 1);
-        if (existingSent[0]) {
-          await base44.asServiceRole.entities.AIJob.update(job.id, {
-            status: "completed",
-            reply_text: aiResult.reply,
-            confidence: aiResult.confidence,
-            stage: "completed",
-            fanvue_sent_at: new Date().toISOString(),
-            ppv_cents: ppvCents,
-          });
-          return { success: true, action: "auto_sent", jobId: job.id, dedup: true };
+      for (let i = 0; i < replies.length; i++) {
+        const isLast = i === replies.length - 1;
+        const bubblePpv = isLast ? ppvCents : null;
+        const bubbleMedia = isLast ? mediaForSend : null;
+        const sendResult = await sendWithRetry(accessToken, fan.external_uuid, replies[i], bubblePpv, bubbleMedia);
+        const su = sendResult?.messageUuid || sendResult?.uuid || null;
+        // Persist this bubble immediately so a timeout can't cause duplicate re-sends
+        if (su) {
+          const existingSent = await base44.asServiceRole.entities.Message.filter({ external_uuid: su }, "-created_date", 1);
+          if (existingSent[0]) continue;
         }
+        await base44.asServiceRole.entities.Message.create({
+          creator_profile_id: creatorProfileId,
+          conversation_id: conversationId,
+          external_uuid: su,
+          sender_type: "creator",
+          body: replies[i],
+          ppv_cents: isLast ? ppvCents : null,
+          media: isLast ? attachedMediaUuids : [],
+          source: "ai",
+        });
+        if (!isLast) await new Promise((res) => setTimeout(res, 1200));
       }
-
-      await base44.asServiceRole.entities.Message.create({
-        creator_profile_id: creatorProfileId,
-        conversation_id: conversationId,
-        external_uuid: sentUuid,
-        sender_type: "creator",
-        body: aiResult.reply,
-        ppv_cents: ppvCents,
-        media: attachedMediaUuids,
-        source: "ai",
-      });
 
       await base44.asServiceRole.entities.Conversation.update(conversationId, {
         last_message_at: new Date().toISOString(),
-        last_message_preview: aiResult.reply,
+        last_message_preview: replyText,
         last_sender_type: "creator",
         last_topic: analysis.current_topic || conversation.last_topic,
       });
 
       await base44.asServiceRole.entities.AIJob.update(job.id, {
         status: "completed",
-        reply_text: aiResult.reply,
+        reply_text: replyText,
         confidence: aiResult.confidence,
         stage: "completed",
         fanvue_sent_at: new Date().toISOString(),
@@ -749,15 +785,15 @@ Analyze the conversation, then write your reply as the creator. Stay fully in ch
         event_type: "ai.auto_sent",
         status: "success",
         message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV: $${(ppvCents / 100).toFixed(2)}, media locked)` : ""}`,
-        metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0 },
+        metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
       });
 
-      return { success: true, action: "auto_sent", jobId: job.id };
+      return { success: true, action: "auto_sent", jobId: job.id, bubbles: replies.length };
     } else {
       // DRAFT mode: always store for approval
       await base44.asServiceRole.entities.AIJob.update(job.id, {
         status: "needs_approval",
-        reply_text: aiResult.reply,
+        reply_text: replyText,
         confidence: aiResult.confidence,
         stage: "completed",
         ai_completed_at: new Date().toISOString(),
