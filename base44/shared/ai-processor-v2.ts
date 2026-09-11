@@ -170,7 +170,7 @@ function isRepetitive(reply: string, recentCreatorMsgs: any[]): boolean {
 function isPpvOfferAllowed(conversation: any, settings: any, recentMsgs: any[]): boolean {
   if (!settings.ppv_allowed) return false;
   const minMessages = settings.ppv_min_messages_between_offers || 5;
-  const minMinutes = settings.ppv_min_minutes_between_offers || 30;
+  const minMinutes = Math.max(settings.ppv_min_minutes_between_offers || 10, 10);
 
   // Check time-based limit
   if (conversation.last_ppv_offer_at) {
@@ -383,14 +383,20 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     }
   }
 
-  // === CONVERSATION-LEVEL LOCK ===
-  if (!jobId) {
+  // === CONVERSATION-LEVEL LOCK (applies to ALL jobs, including webhook ones) ===
+  // Serializes processing per conversation so rapid duplicate fan messages
+  // can't spawn parallel jobs that each send their own PPV. Excludes this job's
+  // own ID; a concurrent job already processing the conversation makes this one
+  // skip and stay pending for the recovery watchdog to re-run once the first
+  // finishes (at which point LATEST_MESSAGE_IS_CREATOR cancels the stale one).
+  {
     const convJobs = await base44.asServiceRole.entities.AIJob.filter(
       { conversation_id: conversationId, status: "processing" },
       "-created_date",
       5
     );
-    if (convJobs.length > 0) {
+    const otherProcessing = convJobs.find((j: any) => j.id !== jobId);
+    if (otherProcessing) {
       return { skipped: true, reason: "CONVERSATION_LOCKED" };
     }
   }
@@ -791,6 +797,31 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
           metadata: { job_id: job.id, reason: "RATE_LIMITED" },
         });
         return { success: true, action: "rate_limited", jobId: job.id };
+      }
+
+      // === SEND-TIME COOLDOWN RE-CHECK (backstop for concurrent jobs) ===
+      // A parallel job on this conversation may have just sent a PPV and
+      // stamped last_ppv_offer_at after we evaluated forcePpv/ppvAllowed.
+      // Re-fetch the conversation fresh; if we're still inside the mandatory
+      // 10-minute window, drop this PPV and send a plain conversational reply
+      // so the fan keeps chatting but never gets back-to-back PPV offers.
+      if (ppvCents && ppvCents > 0) {
+        const freshConv = await base44.asServiceRole.entities.Conversation.get(conversationId);
+        const minMinutes = Math.max(settings.ppv_min_minutes_between_offers || 10, 10);
+        if (freshConv?.last_ppv_offer_at) {
+          const minutesSince = (Date.now() - new Date(freshConv.last_ppv_offer_at).getTime()) / 60000;
+          if (minutesSince < minMinutes) {
+            ppvCents = null;
+            await base44.asServiceRole.entities.ActivityLog.create({
+              creator_profile_id: creatorProfileId,
+              conversation_id: conversationId,
+              event_type: "ai.ppv_cooldown_drop",
+              status: "info",
+              message: `PPV dropped at send time — ${minutesSince.toFixed(1)}min since last offer (min ${minMinutes})`,
+              metadata: { job_id: job.id },
+            });
+          }
+        }
       }
 
       // === PPV LOCKING: attach default vault media if PPV is offered ===
