@@ -6,7 +6,22 @@ import ConversationList from "@/components/inbox/ConversationList";
 import ChatThread from "@/components/inbox/ChatThread";
 import Inspector from "@/components/inbox/Inspector";
 import EmptyState from "@/components/shared/EmptyState";
-import { MessageSquare, Plug } from "lucide-react";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { MessageSquare, Plug, AlertCircle } from "lucide-react";
+
+function PanelFallback({ error, reset }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+      <AlertCircle className="h-6 w-6 text-destructive" />
+      <p className="text-sm text-muted-foreground">This panel crashed. Try reloading.</p>
+      {reset && (
+        <button onClick={reset} className="text-xs text-primary hover:underline">
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function Inbox() {
   const [conversations, setConversations] = React.useState([]);
@@ -465,18 +480,21 @@ export default function Inbox() {
 
   return (
     <div className="flex h-full">
-      <ConversationList
-        conversations={conversations}
-        fans={fans}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        loading={loadingConvos}
-        hasConnection={hasConnection}
-        realtimeStatus={realtimeStatus}
-      />
+      <ErrorBoundary fallback={({ error, reset }) => <PanelFallback error={error} reset={reset} />}>
+        <ConversationList
+          conversations={conversations}
+          fans={fans}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          loading={loadingConvos}
+          hasConnection={hasConnection}
+          realtimeStatus={realtimeStatus}
+        />
+      </ErrorBoundary>
       {selectedConversation ? (
         <>
-          <ChatThread
+          <ErrorBoundary fallback={({ error, reset }) => <PanelFallback error={error} reset={reset} />}>
+            <ChatThread
             conversation={selectedConversation}
             fan={selectedFan}
             creator={creator}
@@ -497,13 +515,16 @@ export default function Inbox() {
             loading={loadingMessages}
             ppvDefaultCents={automationSettings?.default_ppv_cents || 1200}
           />
-          <Inspector
-            fan={selectedFan}
-            memories={memories}
-            conversation={selectedConversation}
-            creator={creator}
-            aiState={aiState}
-          />
+          </ErrorBoundary>
+          <ErrorBoundary fallback={({ error, reset }) => <PanelFallback error={error} reset={reset} />}>
+            <Inspector
+              fan={selectedFan}
+              memories={memories}
+              conversation={selectedConversation}
+              creator={creator}
+              aiState={aiState}
+            />
+          </ErrorBoundary>
         </>
       ) : (
         <div className="flex flex-1 items-center justify-center">

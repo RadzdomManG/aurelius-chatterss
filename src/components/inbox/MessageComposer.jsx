@@ -22,10 +22,10 @@ export default function MessageComposer({
 }) {
   const [ppvMode, setPpvMode] = React.useState(false);
   const [ppvAmount, setPpvAmount] = React.useState("");
-  const [selectedMediaUuid, setSelectedMediaUuid] = React.useState(null);
+  const [selectedMediaUuids, setSelectedMediaUuids] = React.useState([]);
 
   const ppvCents = ppvMode && ppvAmount ? Math.round(parseFloat(ppvAmount) * 100) : null;
-  const hasMedia = !!selectedMediaUuid;
+  const hasMedia = selectedMediaUuids.length > 0;
   const ppvValid = !ppvMode || (ppvCents != null && !isNaN(ppvCents) && ppvCents >= PPV_MIN_CENTS);
   // When media is attached, price is required (locked content). Without media,
   // a plain priced text message is allowed but price must still meet the min.
@@ -42,12 +42,12 @@ export default function MessageComposer({
     if (!canSend) return;
     onSend({
       ppvCents: ppvMode ? ppvCents : null,
-      mediaUuids: hasMedia ? [selectedMediaUuid] : null,
-      mediaPreviewUuid: hasMedia ? selectedMediaUuid : null,
+      mediaUuids: hasMedia ? selectedMediaUuids : null,
+      mediaPreviewUuid: hasMedia ? selectedMediaUuids[0] : null,
     });
     setPpvMode(false);
     setPpvAmount("");
-    setSelectedMediaUuid(null);
+    setSelectedMediaUuids([]);
   };
 
   const togglePpv = () => {
@@ -145,8 +145,8 @@ export default function MessageComposer({
           {creatorProfileId && (
             <VaultPicker
               creatorProfileId={creatorProfileId}
-              selectedUuid={selectedMediaUuid}
-              onPick={(uuid) => setSelectedMediaUuid(uuid)}
+              selectedUuids={selectedMediaUuids}
+              onPick={(uuids) => setSelectedMediaUuids(uuids)}
             />
           )}
         </>

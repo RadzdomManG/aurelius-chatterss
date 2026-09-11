@@ -3,9 +3,18 @@ import { formatDistanceToNow } from "date-fns";
 import { Bot, Pause } from "lucide-react";
 
 export default function ConversationRow({ conversation, fan, isSelected, onClick }) {
-  const time = conversation.last_message_at
-    ? formatDistanceToNow(new Date(conversation.last_message_at), { addSuffix: false })
-    : "";
+  // Timestamp guard: null/epoch < year 2000 → "New"
+  let time = "New";
+  if (conversation.last_message_at) {
+    const d = new Date(conversation.last_message_at);
+    if (!isNaN(d.getTime()) && d.getFullYear() >= 2000) {
+      time = formatDistanceToNow(d, { addSuffix: false });
+    }
+  }
+
+  // AI status indicator: check if last message is from fan with no reply
+  const lastIsFan = conversation.last_sender_type === "fan";
+  const aiStatus = lastIsFan ? "pending" : "replied";
 
   return (
     <button
@@ -42,7 +51,15 @@ export default function ConversationRow({ conversation, fan, isSelected, onClick
           <span className="truncate text-sm font-medium text-foreground">
             {fan?.display_name || "Unknown"}
           </span>
-          <span className="shrink-0 text-xs text-muted-foreground">{time}</span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {aiStatus === "pending" && (
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse"
+                title="Awaiting AI reply"
+              />
+            )}
+            <span className="text-xs text-muted-foreground">{time}</span>
+          </div>
         </div>
         <div className="flex items-center gap-1.5">
           {conversation.last_sender_type === "ai" && (

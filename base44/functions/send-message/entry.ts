@@ -46,6 +46,7 @@ export default async function(req) {
     const accessToken = await getValidAccessToken(connection, base44);
 
     // Send the message via Fanvue API (optionally with locked media + price)
+    // Supports MULTIPLE media items — all are locked behind the PPV paywall.
     const media = (mediaUuids && mediaUuids.length > 0)
       ? { mediaUuids, mediaPreviewUuid: mediaPreviewUuid || mediaUuids[0] }
       : null;

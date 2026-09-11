@@ -1,5 +1,7 @@
 import React from "react";
-import { MoreHorizontal, Pause, User as UserIcon, Bot, Zap } from "lucide-react";
+import { MoreHorizontal, Pause, User as UserIcon, Bot, Zap, Sparkles } from "lucide-react";
+import { base44 } from "@/api/base44Client";
+import { toast } from "sonner";
 import MessageBubble from "@/components/inbox/MessageBubble";
 import MessageComposer from "@/components/inbox/MessageComposer";
 
@@ -32,6 +34,30 @@ export default function ChatThread({
 }) {
   const scrollRef = React.useRef(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [triggeringAI, setTriggeringAI] = React.useState(false);
+
+  // Check if last message is from fan with no creator/AI reply after it
+  const lastMsg = messages[messages.length - 1];
+  const needsAIReply = lastMsg?.sender_type === "fan" && !generating && !triggeringAI;
+
+  const handleTriggerAI = async () => {
+    if (!conversation?.id) return;
+    try {
+      setTriggeringAI(true);
+      const res = await base44.functions.invoke("process-ai-job", {
+        conversationId: conversation.id,
+      });
+      if (res.data?.success || res.data?.skipped) {
+        toast.success(res.data?.skipped ? `AI skipped: ${res.data.reason}` : "AI triggered");
+      } else {
+        toast.error(res.data?.error || "AI trigger failed");
+      }
+    } catch (err) {
+      toast.error("AI trigger failed: " + (err?.response?.data?.error || err.message));
+    } finally {
+      setTriggeringAI(false);
+    }
+  };
 
   React.useEffect(() => {
     if (scrollRef.current) {
@@ -155,6 +181,24 @@ export default function ChatThread({
           messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)
         )}
       </div>
+
+      {/* Trigger AI Reply banner — manual fallback when webhook misses */}
+      {needsAIReply && (
+        <div className="flex items-center justify-between gap-2 border-t border-warning/20 bg-warning/5 px-4 py-2">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Sparkles className="h-3.5 w-3.5 text-warning" />
+            Last message from fan — no AI reply yet
+          </span>
+          <button
+            onClick={handleTriggerAI}
+            disabled={triggeringAI}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Sparkles className={`h-3.5 w-3.5 ${triggeringAI ? "animate-pulse" : ""}`} />
+            {triggeringAI ? "Triggering..." : "Trigger AI Reply"}
+          </button>
+        </div>
+      )}
 
       {/* Composer */}
       <MessageComposer

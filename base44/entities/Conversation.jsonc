@@ -45,6 +45,44 @@
         "ai",
         "system"
       ]
+    },
+    "last_topic": {
+      "type": "string",
+      "description": "Most recent conversation topic detected by AI for continuity"
+    },
+    "open_loops": {
+      "type": "string",
+      "description": "Unresolved conversational threads the AI should address"
+    },
+    "rapport_level": {
+      "type": "string",
+      "enum": [
+        "new",
+        "warming",
+        "established",
+        "close"
+      ],
+      "default": "new"
+    },
+    "sales_stage": {
+      "type": "string",
+      "enum": [
+        "rapport",
+        "discovery",
+        "interest",
+        "tease",
+        "offer",
+        "follow_up"
+      ],
+      "default": "rapport"
+    },
+    "last_ppv_offer_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ppv_offer_count": {
+      "type": "integer",
+      "default": 0
     }
   },
   "required": [

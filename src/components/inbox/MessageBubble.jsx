@@ -1,11 +1,12 @@
 import React from "react";
 import { format } from "date-fns";
-import { Bot, Lock, DollarSign } from "lucide-react";
+import { Bot, Lock, DollarSign, ImageIcon, Film } from "lucide-react";
 
 export default function MessageBubble({ message }) {
   const isFan = message.sender_type === "fan";
   const isAI = message.sender_type === "ai";
   const isSystem = message.sender_type === "system";
+  const hasMedia = Array.isArray(message.media) && message.media.length > 0;
 
   if (isSystem) {
     return (
@@ -29,7 +30,7 @@ export default function MessageBubble({ message }) {
             </span>
           )}
           {isAI && message.source === "ai" && !message.body?.startsWith("[") && (
-            <span className="text-[10px] text-muted-foreground/60">draft</span>
+            <span className="text-[10px] text-muted-foreground/60">auto</span>
           )}
         </div>
 
@@ -43,13 +44,40 @@ export default function MessageBubble({ message }) {
               : "rounded-br-md bg-primary text-primary-foreground"
           }`}
         >
+          {/* PPV lock indicator */}
           {message.ppv_cents > 0 && (
-            <div className="mb-1 flex items-center gap-1 text-xs font-medium opacity-80">
+            <div className={`mb-1 flex items-center gap-1 text-xs font-medium ${
+              isFan ? "text-warning" : "opacity-80"
+            }`}>
               <Lock className="h-3 w-3" />
               PPV ${(message.ppv_cents / 100).toFixed(2)}
             </div>
           )}
-          <p className="whitespace-pre-wrap break-words">{message.body}</p>
+
+          {/* Media attachments indicator */}
+          {hasMedia && (
+            <div className={`mb-1 flex items-center gap-1.5 text-xs ${
+              isFan ? "text-muted-foreground" : "opacity-80"
+            }`}>
+              <div className="flex items-center gap-1">
+                <Film className="h-3 w-3" />
+                <span>{message.media.length} media {message.media.length === 1 ? "item" : "items"}</span>
+              </div>
+              {message.ppv_cents > 0 && (
+                <span className="flex items-center gap-0.5 text-warning">
+                  <Lock className="h-2.5 w-2.5" />
+                  Locked
+                </span>
+              )}
+            </div>
+          )}
+
+          {message.body && (
+            <p className="whitespace-pre-wrap break-words">{message.body}</p>
+          )}
+          {hasMedia && !message.body && (
+            <p className="text-xs italic opacity-60">[Media only]</p>
+          )}
         </div>
 
         {/* Timestamp */}

@@ -49,6 +49,48 @@
     },
     "confidence": {
       "type": "number"
+    },
+    "message_persisted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "job_created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ai_started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ai_completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "fanvue_sent_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ppv_cents": {
+      "type": "integer"
+    },
+    "attached_media_uuids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "ingested",
+        "context_loaded",
+        "ai_generating",
+        "ai_generated",
+        "anti_repetition",
+        "sending",
+        "sent",
+        "completed"
+      ]
     }
   },
   "required": [

@@ -1,20 +1,22 @@
 // fanvue-webhook — handles ALL current Creator events.
 // Primary: creator.message.received (fan → creator), creator.message.sent (creator → fan).
-// Also: creator.message.deleted, creator.message.read, creator.message.reaction.
+// Also: creator.message.deleted, creator.message.read, creator.message.reaction, creator.message.mass_sent.
+// Fan state: creator.fan.status_changed, creator.fan.presence_changed.
 // Business: creator.follow.created, creator.subscription.*, creator.payment.succeeded, etc.
 //
-// Idempotency: dedupes by Fanvue message UUID (persisted check).
+// Uses the canonical ingestIncomingFanMessage() from shared/ingest-message.ts
+// for all message persistence — guarantees single-entry-point dedup + AI trigger.
 // Returns 2xx FAST — AI processing runs async via waitUntil.
 // Signature: X-Fanvue-Signature (HMAC-SHA256, t=... v0=... format).
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { secrets, waitUntil } from "base44:runtime";
-import { processAIJob } from "../../shared/ai-processor.ts";
+import { ingestIncomingFanMessage } from "../../shared/ingest-message.ts";
 import { getValidAccessToken, getChatForFan } from "../../shared/fanvue-api.ts";
 
 const TOLERANCE_SECONDS = 300;
 
 const INBOUND_EVENTS = new Set(["message.received", "creator.message.received"]);
-const OUTBOUND_EVENTS = new Set(["message.sent", "creator.message.sent"]);
+const OUTBOUND_EVENTS = new Set(["message.sent", "creator.message.sent", "creator.message.mass_sent"]);
 const DELETE_EVENTS = new Set(["creator.message.deleted", "message.deleted"]);
 const READ_EVENTS = new Set(["creator.message.read", "creator.message.read_by_fan", "message.read"]);
 
@@ -89,7 +91,6 @@ function detectEventType(req: any, parsed: any): string {
  * Normalize a message event into a common shape. Handles BOTH:
  *   - creator.* envelope (snake_case: data.uuid, data.fan.uuid, data.text, ...)
  *   - legacy flat (camelCase: messageUuid, sender.uuid, message.text, ...)
- * Sets isOutbound for creator.message.sent events.
  */
 function normalizeMessageEvent(parsed: any, eventType: string) {
   const isNew = eventType.startsWith("creator.");
@@ -97,7 +98,7 @@ function normalizeMessageEvent(parsed: any, eventType: string) {
     const data = parsed.data || {};
     const fan = data.fan || {};
     const creator = data.creator || {};
-    const isOutbound = eventType === "creator.message.sent" || data.sender === "creator";
+    const isOutbound = eventType === "creator.message.sent" || eventType === "creator.message.mass_sent" || data.sender === "creator";
     return {
       msgUuid: data.uuid || null,
       msgText: data.text || "",
@@ -151,11 +152,10 @@ async function hydrateIdentityIfNeeded(base44: any, connection: any, normalized:
   }
 }
 
-async function processMessageReceived(base44: any, event: any, eventType: string) {
+async function processMessageEvent(base44: any, event: any, eventType: string) {
   const normalized = normalizeMessageEvent(event, eventType);
   if (!normalized) return;
-  const { msgUuid, msgText, sentAt, senderUuid, mediaUuids, ppvCents, unreadCount, isOutbound } = normalized;
-  if (!senderUuid || !normalized.recipientUuid) return;
+  if (!normalized.senderUuid || !normalized.recipientUuid) return;
 
   const connections = await base44.asServiceRole.entities.FanvueConnection.filter(
     { external_user_uuid: normalized.recipientUuid, status: "connected" },
@@ -168,107 +168,29 @@ async function processMessageReceived(base44: any, event: any, eventType: string
   const creatorProfileId = connection.creator_profile_id;
 
   // For inbound messages, hydrate identity if missing
-  if (!isOutbound) {
+  if (!normalized.isOutbound) {
     await hydrateIdentityIfNeeded(base44, connection, normalized);
   }
 
-  const senderName = normalized.senderName || "Unknown Fan";
-  const senderHandle = normalized.senderHandle || "";
-  const senderAvatar = normalized.senderAvatar || "";
-
-  // Upsert fan
-  let fan: any;
-  const existingFans = await base44.asServiceRole.entities.Fan.filter(
-    { creator_profile_id: creatorProfileId, external_uuid: senderUuid },
-    "-created_date",
-    1
-  );
-  if (existingFans[0]) {
-    fan = existingFans[0];
-    const patch: any = {};
-    if (senderName && senderName !== "Unknown Fan" && senderName !== fan.display_name) patch.display_name = senderName;
-    if (senderHandle && senderHandle !== fan.handle) patch.handle = senderHandle;
-    if (senderAvatar && senderAvatar !== fan.avatar_url) patch.avatar_url = senderAvatar;
-    if (Object.keys(patch).length > 0) await base44.asServiceRole.entities.Fan.update(fan.id, patch);
-  } else {
-    fan = await base44.asServiceRole.entities.Fan.create({
-      creator_profile_id: creatorProfileId,
-      external_uuid: senderUuid,
-      display_name: senderName,
-      handle: senderHandle,
-      avatar_url: senderAvatar || null,
-    });
-  }
-
-  // Upsert conversation (one per creator + fan UUID)
-  let conversation: any;
-  const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
-    { creator_profile_id: creatorProfileId, fan_id: fan.id },
-    "-created_date",
-    1
-  );
-  if (existingConvos[0]) {
-    conversation = existingConvos[0];
-  } else {
-    conversation = await base44.asServiceRole.entities.Conversation.create({
-      creator_profile_id: creatorProfileId,
-      fan_id: fan.id,
-      external_chat_uuid: senderUuid,
-      status: "active",
-    });
-  }
-
-  // Dedup by Fanvue message UUID — prevents double-processing from retries,
-  // concurrent deliveries, or sync + webhook races.
-  if (msgUuid) {
-    const existingMsgs = await base44.asServiceRole.entities.Message.filter(
-      { external_uuid: msgUuid },
-      "-created_date",
-      1
-    );
-    if (existingMsgs[0]) return;
-  }
-
-  const senderType = isOutbound ? "creator" : "fan";
-  await base44.asServiceRole.entities.Message.create({
-    creator_profile_id: creatorProfileId,
-    conversation_id: conversation.id,
-    external_uuid: msgUuid || null,
-    sender_type: senderType,
-    body: msgText,
-    media: mediaUuids,
-    ppv_cents: ppvCents,
+  // Use the canonical ingest function — single entry point for all messages
+  const result = await ingestIncomingFanMessage(base44, {
+    creatorProfileId,
+    fanUuid: normalized.senderUuid,
+    fanDisplayName: normalized.senderName || undefined,
+    fanHandle: normalized.senderHandle || undefined,
+    fanAvatar: normalized.senderAvatar || undefined,
+    messageUuid: normalized.msgUuid,
+    messageText: normalized.msgText,
+    mediaUuids: normalized.mediaUuids,
+    ppvCents: normalized.ppvCents,
+    sentAt: normalized.sentAt,
+    unreadCount: normalized.unreadCount,
+    isOutbound: normalized.isOutbound,
+    triggerAI: !normalized.isOutbound,
     source: "webhook",
-    fanvue_created_at: sentAt,
   });
 
-  // Update conversation metadata
-  const nextUnread = isOutbound ? (conversation.unread_count || 0) : (unreadCount != null ? unreadCount : (conversation.unread_count || 0) + 1);
-  await base44.asServiceRole.entities.Conversation.update(conversation.id, {
-    status: "active",
-    unread_count: nextUnread,
-    last_message_at: sentAt,
-    last_message_preview: msgText || (mediaUuids.length ? "[media]" : ""),
-    last_sender_type: senderType,
-  });
-
-  await base44.asServiceRole.entities.ActivityLog.create({
-    creator_profile_id: creatorProfileId,
-    conversation_id: conversation.id,
-    event_type: isOutbound ? "message.persisted_outbound" : "message.persisted",
-    status: "info",
-    message: `${isOutbound ? "Creator sent" : "New message from"} ${senderName}`,
-    metadata: { messageUuid: msgUuid, event: eventType, hydrated: !!(senderName && senderName !== "Unknown Fan") },
-  });
-
-  // ONLY trigger AI for inbound fan messages — never for outbound creator messages
-  if (!isOutbound) {
-    try {
-      waitUntil(processAIJob(base44, conversation.id, null, msgUuid));
-    } catch (aiErr) {
-      console.error("[webhook] AI enqueue failed:", (aiErr as any).message);
-    }
-  }
+  return result;
 }
 
 async function processMessageDeleted(base44: any, event: any) {
@@ -297,6 +219,37 @@ async function processMessageRead(base44: any, event: any) {
     if (convos[0]) {
       await base44.asServiceRole.entities.Conversation.update(convos[0].id, { unread_count: 0 });
     }
+  } catch (e) {}
+}
+
+async function processFanStatusChanged(base44: any, event: any) {
+  const data = event.data || event;
+  const fanUuid = data.fan?.uuid || data.user?.uuid || data.uuid;
+  const status = data.status || data.subscription_status;
+  if (!fanUuid) return;
+  try {
+    const fans = await base44.asServiceRole.entities.Fan.filter({ external_uuid: fanUuid }, "-created_date", 1);
+    if (fans[0]) {
+      await base44.asServiceRole.entities.Fan.update(fans[0].id, { subscription_status: status });
+    }
+    await base44.asServiceRole.entities.ActivityLog.create({
+      event_type: "fan.status_changed",
+      status: "info",
+      message: `Fan ${fans[0]?.display_name || fanUuid} status changed: ${status || "unknown"}`,
+    });
+  } catch (e) {}
+}
+
+async function processFanPresenceChanged(base44: any, event: any) {
+  const data = event.data || event;
+  const fanUuid = data.fan?.uuid || data.user?.uuid || data.uuid;
+  const presence = data.presence || data.status;
+  try {
+    await base44.asServiceRole.entities.ActivityLog.create({
+      event_type: "fan.presence_changed",
+      status: "info",
+      message: `Fan ${fanUuid} presence: ${presence || "unknown"}`,
+    });
   } catch (e) {}
 }
 
@@ -360,13 +313,19 @@ export default async function (req: Request): Promise<Response> {
 
     if (INBOUND_EVENTS.has(eventType) || OUTBOUND_EVENTS.has(eventType)) {
       const base44 = createClientFromRequest(req);
-      await processMessageReceived(base44, event, eventType);
+      await processMessageEvent(base44, event, eventType);
     } else if (DELETE_EVENTS.has(eventType)) {
       const base44 = createClientFromRequest(req);
       await processMessageDeleted(base44, event);
     } else if (READ_EVENTS.has(eventType)) {
       const base44 = createClientFromRequest(req);
       await processMessageRead(base44, event);
+    } else if (eventType === "creator.fan.status_changed" || eventType === "fan.status_changed") {
+      const base44 = createClientFromRequest(req);
+      await processFanStatusChanged(base44, event);
+    } else if (eventType === "creator.fan.presence_changed" || eventType === "fan.presence_changed") {
+      const base44 = createClientFromRequest(req);
+      await processFanPresenceChanged(base44, event);
     } else {
       // Log other business events (follow, subscription, payment, etc.)
       waitUntil(

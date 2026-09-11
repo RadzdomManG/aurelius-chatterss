@@ -51,7 +51,7 @@ export default async function(req) {
 
     const accessToken = await getValidAccessToken(connection, base44);
     const me = await getMe(accessToken);
-    const creatorUuid = me.uuid;
+    const creatorUuid = me.uuid || me.id || me.user?.uuid;
 
     // Preload existing data
     const existingFans = await base44.asServiceRole.entities.Fan.filter(
@@ -95,9 +95,9 @@ export default async function(req) {
         const chatsRes = await getChats(accessToken, { cursor, size: 50 });
         const chats = chatsRes.data || [];
         allChats.push(...chats);
-        cursor = chatsRes.nextCursor || null;
+        cursor = chatsRes.nextCursor || chatsRes.next_cursor || null;
         if (cursor) await sleep(400);
-      } while (cursor);
+        } while (cursor);
 
       // Build fans from the full in-memory chat list
       for (const chat of allChats) {

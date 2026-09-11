@@ -5,33 +5,7 @@ import { Link } from "react-router-dom";
 import { Image as ImageIcon, Film, Folder, Plug, Download, Lock, DollarSign, ShieldAlert } from "lucide-react";
 import EmptyState from "@/components/shared/EmptyState";
 import StatusBadge from "@/components/shared/StatusBadge";
-
-/**
- * Extract thumbnail URL from Fanvue media object.
- * Fanvue returns a `variants` array — each variant has variantType + url.
- * Priority: thumbnail > thumbnail_gallery > main > any variant with url.
- * Fallbacks for non-standard shapes (preview, cover, etc.).
- */
-function getThumbnail(item) {
-  const variants = Array.isArray(item.variants) ? item.variants : [];
-  const thumb =
-    variants.find((v) => v.variantType === "thumbnail") ||
-    variants.find((v) => v.variantType === "thumbnail_gallery") ||
-    variants.find((v) => v.variantType === "main") ||
-    variants.find((v) => v.url);
-  if (thumb?.url) return thumb.url;
-  // Legacy fallbacks
-  return (
-    item.thumbnailUrl ||
-    item.thumbnail_url ||
-    item.previewUrl ||
-    item.url ||
-    item.preview?.url ||
-    item.cover?.url ||
-    item.thumbnails?.[0]?.url ||
-    null
-  );
-}
+import { getMediaThumbnail, isMediaVideo, getMediaPriceCents } from "@/lib/vault-utils";
 
 export default function Media() {
   const [hasConnection, setHasConnection] = React.useState(false);
@@ -226,9 +200,9 @@ export default function Media() {
 
 function MediaCard({ item }) {
   const [imgError, setImgError] = React.useState(false);
-  const isVideo = item.type === "video" || item.mediaType === "video";
-  const thumb = getThumbnail(item);
-  const isPpv = item.pricing?.USD?.price || item.priceCents || item.isLocked;
+  const isVideo = isMediaVideo(item);
+  const thumb = getMediaThumbnail(item);
+  const isPpv = getMediaPriceCents(item) != null;
   const status = item.status || "ready";
 
   return (
@@ -278,11 +252,11 @@ function MediaCard({ item }) {
         <p className="truncate text-sm font-medium text-foreground">{item.title || item.name || "Untitled"}</p>
         <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
           {isPpv ? (
-            <span className="inline-flex items-center gap-1 text-warning">
-              <DollarSign className="h-3 w-3" />
-              {((item.pricing?.USD?.price || item.priceCents || 0) / 100).toFixed(2)}
-            </span>
-          ) : (
+              <span className="inline-flex items-center gap-1 text-warning">
+                <DollarSign className="h-3 w-3" />
+                {(getMediaPriceCents(item) / 100).toFixed(2)}
+              </span>
+            ) : (
             <span className="inline-flex items-center gap-1">
               <Lock className="h-3 w-3" /> Free
             </span>

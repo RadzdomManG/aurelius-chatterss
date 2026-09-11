@@ -15,9 +15,29 @@ export default function ConversationList({
 }) {
   const [search, setSearch] = React.useState("");
   const [filter, setFilter] = React.useState("All");
+  const [showEmpty, setShowEmpty] = React.useState(false);
 
   const filtered = React.useMemo(() => {
-    let result = conversations;
+    // UI-level dedup by fan_id (safety net even with clean data).
+    // Keep the most recent conversation per fan_id.
+    const byFan = new Map();
+    for (const c of conversations) {
+      const existing = byFan.get(c.fan_id);
+      if (!existing) {
+        byFan.set(c.fan_id, c);
+      } else {
+        const aT = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+        const bT = existing.last_message_at ? new Date(existing.last_message_at).getTime() : 0;
+        if (aT > bT) byFan.set(c.fan_id, c);
+      }
+    }
+    let result = Array.from(byFan.values());
+
+    // Hide empty conversations (no message preview and no last_message_at)
+    // unless the operator explicitly toggled "Show empty".
+    if (!showEmpty) {
+      result = result.filter((c) => c.last_message_preview || c.last_message_at);
+    }
 
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -35,11 +55,20 @@ export default function ConversationList({
     } else if (filter === "Paused") {
       result = result.filter((c) => fans[c.fan_id]?.automation_paused);
     } else if (filter === "AI") {
-      result = result.filter((c) => c.last_sender_type === "ai");
+      result = result.filter((c) => c.last_sender_type === "ai" || c.last_sender_type === "creator");
     }
 
+    // Sort by last_message_at descending (real messages first, empty last)
+    result.sort((a, b) => {
+      const aT = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+      const bT = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+      return bT - aT;
+    });
+
     return result;
-  }, [conversations, fans, search, filter]);
+  }, [conversations, fans, search, filter, showEmpty]);
+
+  const emptyCount = conversations.filter((c) => !c.last_message_preview && !c.last_message_at).length;
 
   return (
     <div className="flex h-full w-80 shrink-0 flex-col border-r border-border bg-card">
@@ -69,21 +98,36 @@ export default function ConversationList({
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-1 px-3 pb-2">
-        {FILTERS.map((f) => (
+      {/* Filters + Empty toggle */}
+      <div className="flex items-center justify-between gap-1 px-3 pb-2">
+        <div className="flex gap-1">
+          {FILTERS.map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                filter === f
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        {emptyCount > 0 && (
           <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-              filter === f
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            onClick={() => setShowEmpty((v) => !v)}
+            className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+              showEmpty
+                ? "bg-accent text-accent-foreground"
+                : "text-muted-foreground hover:text-foreground"
             }`}
+            title="Toggle empty conversations"
           >
-            {f}
+            {showEmpty ? "Hide" : "Show"} empty ({emptyCount})
           </button>
-        ))}
+        )}
       </div>
 
       {/* List */}
