@@ -41,6 +41,8 @@ export default async function(req) {
       }
     }
 
+    // The shared processor normalizes message chronology before deciding
+    // whether this job was superseded.
     const result = await processAIJob(base44, resolvedConversationId, jobId, resolvedTriggerMessageUuid);
 
     return Response.json({ success: true, ...result });
