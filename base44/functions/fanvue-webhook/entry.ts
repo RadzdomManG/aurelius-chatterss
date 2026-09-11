@@ -6,7 +6,8 @@
 //
 // Uses the canonical ingestIncomingFanMessage() from shared/ingest-message.ts
 // for all message persistence — guarantees single-entry-point dedup + AI trigger.
-// Returns 2xx FAST — AI processing runs async via waitUntil.
+// Persists the message and runs AI processing inline; the recovery workflow
+// picks up any pre-created job if the webhook request ends before completion.
 // Signature: X-Fanvue-Signature (HMAC-SHA256, t=... v0=... format).
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { secrets, waitUntil } from "base44:runtime";
