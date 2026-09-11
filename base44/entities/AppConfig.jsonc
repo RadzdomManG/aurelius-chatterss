@@ -17,6 +17,15 @@
     },
     "webhook_url": {
       "type": "string"
+    },
+    "paused": {
+      "type": "boolean",
+      "default": false,
+      "description": "Global pause flag \u2014 when true, no AI processing, webhook job creation, or background workflows run."
+    },
+    "paused_modes": {
+      "type": "object",
+      "description": "Snapshot of each creator's automation_mode captured at pause time, keyed by creator_profile_id, so resume restores them."
     }
   }
 }

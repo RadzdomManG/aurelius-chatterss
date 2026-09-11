@@ -6,6 +6,8 @@
 //
 // This is the SINGLE entry point for all incoming fan messages. Never scatter
 // this logic across multiple paths.
+import { isPaused } from "./app-config.ts";
+
 export async function ingestIncomingFanMessage(
   base44: any,
   params: {
@@ -143,6 +145,21 @@ export async function ingestIncomingFanMessage(
 
   // 7. Trigger AI ONLY for inbound fan messages (never outbound)
   if (triggerAI && !isOutbound) {
+    // Global pause: persist the message but do not enqueue AI processing.
+    if (await isPaused(base44)) {
+      try {
+        await base44.asServiceRole.entities.ActivityLog.create({
+          creator_profile_id: creatorProfileId,
+          conversation_id: conversation.id,
+          event_type: "message.paused",
+          status: "info",
+          message: `Message stored; AI skipped — system paused`,
+          metadata: { messageUuid },
+        });
+      } catch (e) {}
+      return { skipped: false, fan, conversation, message, paused: true };
+    }
+
     let job: any = null;
     try {
       // Pre-create a PENDING AI job BEFORE processing. If the webhook

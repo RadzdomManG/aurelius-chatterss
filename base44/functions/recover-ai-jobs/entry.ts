@@ -10,6 +10,7 @@
 // 5. Clean up duplicate messages (same external_uuid — keep oldest)
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor-v2.ts";
+import { isPaused } from "../../shared/app-config.ts";
 // Uses the canonical ai-processor-v2 (no false supersession cancellation).
 
 const STUCK_MS = 2 * 60 * 1000;
@@ -17,6 +18,12 @@ const PENDING_STALE_MS = 15 * 1000;
 
 export default async function (req: Request): Promise<Response> {
   const base44 = createClientFromRequest(req);
+
+  // Global pause: no recovery work while the system is paused — pending jobs
+  // stay pending and are processed normally once resumed.
+  if (await isPaused(base44)) {
+    return Response.json({ success: true, paused: true, skipped: true });
+  }
 
   let recovered = 0, failed = 0, pendingRecovered = 0, duplicatesCancelled = 0, needsApprovalConverted = 0, msgDeduped = 0;
 

@@ -1,5 +1,6 @@
 import { getValidAccessToken, sendFanvueMessage, getMedia } from "./fanvue-api.ts";
 import { callGrok } from "./grok-client.ts";
+import { isPaused } from "./app-config.ts";
 
 /**
  * Server-side AI processor — the single canonical automation engine.
@@ -292,6 +293,14 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   };
 
   const creatorProfileId = conversation.creator_profile_id;
+
+  // === GLOBAL PAUSE CHECK ===
+  // If the operator has paused the system, finalize this job as cancelled
+  // and stop. Messages are still persisted by the ingest layer; only AI
+  // processing is halted.
+  if (await isPaused(base44)) {
+    return await skipJob("GLOBAL_PAUSED");
+  }
 
   // Load all context in parallel
   const [creators, personas, fans, memories, recentMsgs, triggerMsgs, latestMsgs, automationSettings, connections, fanMsgsForCount] = await Promise.all([
