@@ -1,6 +1,6 @@
 {
   "name": "AI Job Recovery",
-  "description": "Every 5 minutes, recovers stuck AI jobs and reprocesses stale pending jobs so no fan message goes unanswered if the webhook request ends mid-processing.",
+  "description": "Every 5 minutes, recovers stuck AI jobs and reprocesses stale pending jobs so no fan message goes unanswered if the webhook request ends mid-processing or a Grok call hangs.",
   "trigger": {
     "condition": null,
     "config": {
@@ -22,7 +22,7 @@
     "document": {
       "dsl": "1.0.0",
       "name": "ai_job_recovery",
-      "version": "1.1",
+      "version": "1.2",
       "namespace": "base44"
     },
     "do": [

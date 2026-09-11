@@ -28,14 +28,28 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema) {
     response_format: { type: "json_object" },
   };
 
-  const res = await fetch(XAI_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  // Hard timeout: if xAI stalls (network hang or content-policy stall), abort
+  // so the caller's catch fires instead of freezing the job at ai_generating.
+  const controller = new AbortController();
+  const timeoutMs = 25000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(XAI_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err: any) {
+    clearTimeout(timeout);
+    if (err?.name === "AbortError") throw new Error(`xAI API timeout (>${timeoutMs / 1000}s)`);
+    throw err;
+  }
+  clearTimeout(timeout);
 
   if (!res.ok) {
     const errText = await res.text().catch(() => res.statusText);
