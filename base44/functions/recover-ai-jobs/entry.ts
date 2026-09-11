@@ -12,7 +12,7 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor.ts";
 
 const STUCK_MS = 2 * 60 * 1000;
-const PENDING_STALE_MS = 30 * 1000;
+const PENDING_STALE_MS = 15 * 1000;
 
 export default async function (req: Request): Promise<Response> {
   const base44 = createClientFromRequest(req);
