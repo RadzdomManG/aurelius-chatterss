@@ -217,7 +217,20 @@ export default function Analytics() {
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
       <div className="mx-auto max-w-5xl px-6 py-8">
-        <h1 className="mb-1 font-heading text-3xl text-foreground">Analytics</h1>
+        <div className="mb-1 flex items-center gap-3">
+          <h1 className="font-heading text-3xl text-foreground">Analytics</h1>
+          {conn?.granted_scopes?.includes("read:insights") ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-success">
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
+              Insights active
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning">
+              <Lock className="h-3 w-3" />
+              Insights limited — reconnect
+            </span>
+          )}
+        </div>
         <p className="mb-2 text-sm text-muted-foreground">
           {creator?.display_name ? `${creator.display_name} · ` : ""}Real Fanvue insights + Aurelius operational metrics
         </p>
