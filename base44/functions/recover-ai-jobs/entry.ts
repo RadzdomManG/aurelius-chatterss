@@ -10,6 +10,7 @@
 // 5. Clean up duplicate messages (same external_uuid — keep oldest)
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor-v2.ts";
+// Uses the canonical ai-processor-v2 (no false supersession cancellation).
 
 const STUCK_MS = 2 * 60 * 1000;
 const PENDING_STALE_MS = 15 * 1000;

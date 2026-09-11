@@ -12,6 +12,7 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { secrets, waitUntil } from "base44:runtime";
 import { ingestIncomingFanMessage } from "../../shared/ingest-message.ts";
+// AI processing runs synchronously within this request via process-ai-job (canonical ai-processor-v2).
 import { getValidAccessToken, getChatForFan } from "../../shared/fanvue-api.ts";
 
 const TOLERANCE_SECONDS = 300;

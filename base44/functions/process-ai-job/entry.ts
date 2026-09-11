@@ -1,6 +1,8 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
 import { processAIJob } from "../../shared/ai-processor-v2.ts";
 
+// Uses the canonical ai-processor-v2: persona-based, bound to the exact trigger
+// message, no false SUPERSEDED cancellation — every inbound fan message gets a reply.
 export default async function(req) {
   let parsedBody = {};
   try {

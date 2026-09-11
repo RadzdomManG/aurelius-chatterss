@@ -214,11 +214,11 @@ const AI_JSON_SCHEMA = {
 export async function processAIJob(base44: any, conversationId: string, jobId: string | null = null, triggerMessageUuid: string | null = null) {
   const now = new Date().toISOString();
 
-  // NOTE: The 2-second burst delay was removed. Burst/supersession handling
-  // is now deterministic — see the "SUPERSEDED_BY_NEWER_FAN_MESSAGE" check
-  // below, which skips this job if a newer fan message arrived. The delay
-  // previously caused the serverless runtime to kill the background task
-  // before the job was ever created.
+  // Each inbound fan message pre-creates a pending AI job bound to its exact
+  // UUID. This job answers THAT message. There is no burst-supersession skip —
+  // the only early exit on message ordering is LATEST_MESSAGE_IS_CREATOR,
+  // which cancels only when a creator/AI reply newer than this trigger already
+  // exists (i.e. the fan message was already answered).
   const conversation = await base44.asServiceRole.entities.Conversation.get(conversationId);
   if (!conversation) throw new Error("Conversation not found");
 

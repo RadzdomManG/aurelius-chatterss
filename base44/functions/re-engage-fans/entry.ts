@@ -1,6 +1,6 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { waitUntil } from "base44:runtime";
-import { processAIJob } from "../../shared/ai-processor.ts";
+import { processAIJob } from "../../shared/ai-processor-v2.ts";
 
 // Re-engagement: finds conversations where the fan hasn't messaged in 7+ days
 // and the creator is in full_auto mode, then triggers a persona-consistent
