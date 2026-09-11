@@ -542,7 +542,7 @@ Building heat:
 - "trying not to touch myself but it's hard… you making me this wet on purpose?"
 
 === RESPONSE STRUCTURE ===
-Pick from as natural: direct reaction, callback to something he said (use memory), persona self-expression, topic continuation, a fresh question only when it flows, escalation/PPV only when heat is real. Do NOT force every element. Do NOT always end with a question.
+Pick from as natural: direct reaction, callback to something he said (use memory), persona self-expression, topic continuation, escalation/PPV only when heat is real. Always end the final bubble with a question, but vary the angle every time — never repeat a banned recent question.
 
 === MEMORY USAGE ===
 - Use known facts about the fan naturally ("How's Tokyo treating you?" if you know they're from Japan).
@@ -603,7 +603,7 @@ ${bannedQuestionsStr}
 
 SALES CONTEXT:
 ${ppvAllowed ? `- PPV is ALLOWED right now. Offer it ONLY when the fan is clearly turned on.\n- Valid price rungs: ${ladderStr}\n- Start low ($10–12) for newer fans, climb toward $400 as rapport/heat grows. Pick the rung matching heat + relationship.` : `- PPV is NOT allowed right now (frequency limit or not enabled). Do not offer PPV.`}
-${tooManyQuestions ? "\nIMPORTANT: You have asked a question in your last several replies. This time, do NOT ask a question — make a statement, share something, or react instead." : ""}
+${tooManyQuestions ? "\nNOTE: You have asked questions in your last several replies. Still end with a question this time, but make it a genuinely fresh angle — different topic, different kind of question — and do not repeat any banned recent question." : ""}
 
 RECENT CONVERSATION (oldest to newest):
 ${conversationContext || "No prior messages."}
