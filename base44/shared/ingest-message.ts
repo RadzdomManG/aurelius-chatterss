@@ -6,7 +6,7 @@
 //
 // This is the SINGLE entry point for all incoming fan messages. Never scatter
 // this logic across multiple paths.
-import { processAIJob } from "./ai-processor.ts";
+import { waitUntil } from "base44:runtime";
 
 export async function ingestIncomingFanMessage(
   base44: any,
@@ -159,11 +159,27 @@ export async function ingestIncomingFanMessage(
         job_created_at: new Date().toISOString(),
       });
 
-      // Process synchronously inside the webhook request lifecycle.
-      // Background tasks (waitUntil) get killed by the serverless runtime
-      // ~⅔ of the time; running inline guarantees the reply is generated
-      // and sent before the webhook returns 2xx to Fanvue.
-      await processAIJob(base44, conversation.id, job.id, messageUuid);
+      // Dispatch to a dedicated function so the webhook can acknowledge Fanvue
+      // quickly. waitUntil keeps the dispatch alive after the response; the
+      // persisted pending job remains the durable fallback for the watchdog.
+      waitUntil(
+        base44.asServiceRole.functions.invoke("process-ai-job", {
+          conversationId: conversation.id,
+          jobId: job.id,
+          triggerMessageUuid: messageUuid || message.id,
+        }).catch(async (dispatchErr: any) => {
+          try {
+            await base44.asServiceRole.entities.ActivityLog.create({
+              creator_profile_id: creatorProfileId,
+              conversation_id: conversation.id,
+              event_type: "ai.dispatch.failed",
+              status: "error",
+              message: `AI job dispatch failed: ${dispatchErr?.message || "unknown error"}`,
+              metadata: { messageUuid, jobId: job?.id },
+            });
+          } catch (e) {}
+        })
+      );
     } catch (aiErr) {
       // AI processing failed — the message is already persisted. The job
       // is marked failed by processAIJob's internal error handler. Return
