@@ -244,16 +244,18 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   const creatorProfileId = conversation.creator_profile_id;
 
   // Load all context in parallel
-  const [creators, personas, fans, memories, recentMsgs, latestFanMsgs, latestMsgs, automationSettings, connections] = await Promise.all([
+  const [creators, personas, fans, memories, recentMsgs, triggerMsgs, latestMsgs, automationSettings, connections] = await Promise.all([
     base44.asServiceRole.entities.CreatorProfile.filter({ id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.PersonaProfile.filter({ creator_profile_id: creatorProfileId, active: true }, "-updated_date", 1),
     base44.asServiceRole.entities.Fan.filter({ id: conversation.fan_id }, "-created_date", 1),
     base44.asServiceRole.entities.FanMemory.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "-created_date", 30),
     // Fetch the newest window first; it is normalized to chronological order below.
     base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "-created_date", 30),
-    // Fetch authoritative latest records separately so correctness never
-    // depends on the ordering or limit behavior of the context query.
-    base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId, sender_type: "fan" }, "-created_date", 1),
+    // Resolve the exact message that created this job. This avoids relying on
+    // backend sort behavior when deciding which fan message to answer.
+    triggerMessageUuid
+      ? base44.asServiceRole.entities.Message.filter({ external_uuid: triggerMessageUuid }, "-created_date", 1)
+      : Promise.resolve([]),
     base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "-created_date", 1),
     base44.asServiceRole.entities.AutomationSettings.filter({ creator_profile_id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.FanvueConnection.filter({ creator_profile_id: creatorProfileId, status: "connected" }, "-created_date", 1),
@@ -283,16 +285,12 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   if (fan?.automation_paused) return await skipJob("FAN_PAUSED");
   if (conversation.status === "archived") return await skipJob("CONVERSATION_PAUSED");
 
-  // Find the latest fan message
-  const lastFanMessage = latestFanMsgs[0];
+  // Answer the exact inbound message that created this job. For manually
+  // created jobs without a trigger UUID, fall back to the newest fan message
+  // in the normalized context window.
+  const contextFanMessages = recentMsgs.filter((m: any) => m.sender_type === "fan");
+  const lastFanMessage = triggerMsgs[0] || contextFanMessages[contextFanMessages.length - 1];
   if (!lastFanMessage) return await skipJob("NO_FAN_MESSAGE");
-
-  // === BURST HANDLING ===
-  if (triggerMessageUuid && lastFanMessage.external_uuid) {
-    if (triggerMessageUuid !== lastFanMessage.external_uuid && triggerMessageUuid !== lastFanMessage.id) {
-      return await skipJob("SUPERSEDED_BY_NEWER_FAN_MESSAGE");
-    }
-  }
 
   // === LATEST MESSAGE CHECK ===
   const lastMessage = latestMsgs[0];
