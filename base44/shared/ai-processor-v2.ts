@@ -379,6 +379,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     }
   }
   if (!job) {
+    // Manual trigger without a pre-created job — create + claim in one step.
     job = await base44.asServiceRole.entities.AIJob.create({
       creator_profile_id: creatorProfileId,
       conversation_id: conversationId,
@@ -390,13 +391,22 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
       ai_started_at: now,
     });
   } else {
-    await base44.asServiceRole.entities.AIJob.update(job.id, {
-      status: "processing",
-      locked_at: now,
-      last_error: null,
-      ai_started_at: now,
-      stage: "ingested",
-    });
+    // === ATOMIC CLAIM ===
+    // Only one caller may transition this job to "processing". This prevents
+    // the inline webhook trigger and the recovery watchdog from BOTH
+    // processing the same job — which double-sends every reply to the fan.
+    // Recovery resets stale locks to null before re-invoking, so we accept
+    // both a pending job and a processing job whose lock was cleared.
+    const claimBy = `claim_${Date.now()}_${crypto.randomUUID()}`;
+    const claimOps = { $set: { status: "processing", locked_at: now, locked_by: claimBy, stage: "ingested", ai_started_at: now, last_error: null } };
+    await base44.asServiceRole.entities.AIJob.updateMany({ id: job.id, status: "pending" }, claimOps);
+    await base44.asServiceRole.entities.AIJob.updateMany({ id: job.id, status: "processing", locked_at: null }, claimOps);
+    const claimed = await base44.asServiceRole.entities.AIJob.get(job.id);
+    if (!claimed || claimed.locked_by !== claimBy) {
+      // Another caller already owns this job — let it finish.
+      return { skipped: true, reason: "JOB_ALREADY_CLAIMED" };
+    }
+    job = claimed;
   }
 
   try {
@@ -759,22 +769,26 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         const bubblePpv = isLast ? ppvCents : null;
         const bubbleMedia = isLast ? mediaForSend : null;
         const sendResult = await sendWithRetry(accessToken, fan.external_uuid, replies[i], bubblePpv, bubbleMedia);
-        const su = sendResult?.messageUuid || sendResult?.uuid || null;
-        // Persist this bubble immediately so a timeout can't cause duplicate re-sends
+        const su = sendResult?.messageUuid || sendResult?.uuid || sendResult?.data?.uuid || sendResult?.message?.uuid || sendResult?.id || null;
+        // Dedup by Fanvue message UUID. If the send response carried no UUID, skip
+        // the local create and let the outbound webhook persist it as the single
+        // source — otherwise a local (null-uuid) record + a webhook (real-uuid)
+        // record both insert and the bubble renders twice in the inbox.
         if (su) {
           const existingSent = await base44.asServiceRole.entities.Message.filter({ external_uuid: su }, "-created_date", 1);
-          if (existingSent[0]) continue;
+          if (!existingSent[0]) {
+            await base44.asServiceRole.entities.Message.create({
+              creator_profile_id: creatorProfileId,
+              conversation_id: conversationId,
+              external_uuid: su,
+              sender_type: "creator",
+              body: replies[i],
+              ppv_cents: isLast ? ppvCents : null,
+              media: isLast ? attachedMediaUuids : [],
+              source: "ai",
+            });
+          }
         }
-        await base44.asServiceRole.entities.Message.create({
-          creator_profile_id: creatorProfileId,
-          conversation_id: conversationId,
-          external_uuid: su,
-          sender_type: "creator",
-          body: replies[i],
-          ppv_cents: isLast ? ppvCents : null,
-          media: isLast ? attachedMediaUuids : [],
-          source: "ai",
-        });
         if (!isLast) await new Promise((res) => setTimeout(res, 1200));
       }
 

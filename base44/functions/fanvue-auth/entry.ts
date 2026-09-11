@@ -56,7 +56,9 @@ export default async function (req: Request): Promise<Response> {
         status: "pending",
       });
 
-      const authUrl = `https://auth.fanvue.com/oauth2/auth?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirect)}&scope=${encodeURIComponent(FANVUE_SCOPES)}&state=${stateValue}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+      // prompt=login forces a fresh Fanvue login screen, clearing any stale
+      // session that triggers "Login session does not match the signed-in account".
+      const authUrl = `https://auth.fanvue.com/oauth2/auth?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirect)}&scope=${encodeURIComponent(FANVUE_SCOPES)}&state=${stateValue}&code_challenge=${codeChallenge}&code_challenge_method=S256&prompt=login`;
 
       return Response.json({ authUrl, scopes: FANVUE_SCOPES });
     }
