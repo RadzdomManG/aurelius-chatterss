@@ -30,11 +30,11 @@
     },
     "max_ppv_cents": {
       "type": "integer",
-      "default": 9000
+      "default": 40000
     },
     "default_ppv_cents": {
       "type": "integer",
-      "default": 1000
+      "default": 1200
     },
     "ppv_ladder_enabled": {
       "type": "array",
@@ -43,12 +43,14 @@
       },
       "default": [
         1000,
+        1200,
         1500,
         2500,
-        3500,
         5000,
-        7000,
-        9000
+        10000,
+        20000,
+        30000,
+        40000
       ]
     },
     "default_media_uuid": {
