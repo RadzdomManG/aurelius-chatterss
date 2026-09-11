@@ -63,7 +63,7 @@
     },
     "ppv_min_minutes_between_offers": {
       "type": "integer",
-      "default": 30
+      "default": 10
     },
     "reengagement_enabled": {
       "type": "boolean",
