@@ -48,6 +48,20 @@ function validatePpvCents(suggested: number, settings: any): number | null {
   return best;
 }
 
+// ---- 3-strike explicit-request detector ----
+// When a fan asks for explicit content 3+ times, that is a strong buying
+// signal → the AI must send a PPV offer (5 pictures auto-attached) this turn.
+const EXPLICIT_REQUEST_RE = /\b(puss(y|ies)|nude?s?|naked|bare\b|boobs?|tits?|nipples?|clit|vagina|asshole|send(?:ing)?\s+(?:me\s+)?(?:a\s+)?pic(?:ture)?s?|show\s+(?:me\s+)?(?:your\s+)?(?:pussy|body|tits?|boobs?|ass)|see\s+(?:your\s+)?(?:pussy|body|tits?|boobs?|ass|nude?s?)|your\s+body|spread|masturbat\w*|finger(?:ing)?\s+(?:your\s+)?(?:self|pussy)|play\s+with\s+(?:your\s+)?(?:self|pussy)|touch\s+yourself|cum(?:ming)?|horny|xxx|sex\s+tape)\b/i;
+
+function countExplicitRequests(fanMessages: any[]): number {
+  let n = 0;
+  for (const m of fanMessages) {
+    const body = String((m && (m.body || "")) || "").toLowerCase();
+    if (EXPLICIT_REQUEST_RE.test(body)) n++;
+  }
+  return n;
+}
+
 // ---- SINGLE CANONICAL AUTOMATION MODE RESOLVER ----
 export function resolveAutomationMode(creator: any, conversation: any, settings: any): "STOPPED" | "DRAFT" | "AUTO" {
   // automation_mode (per-fan override → global creator mode) is the single
@@ -280,7 +294,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   const creatorProfileId = conversation.creator_profile_id;
 
   // Load all context in parallel
-  const [creators, personas, fans, memories, recentMsgs, triggerMsgs, latestMsgs, automationSettings, connections] = await Promise.all([
+  const [creators, personas, fans, memories, recentMsgs, triggerMsgs, latestMsgs, automationSettings, connections, fanMsgsForCount] = await Promise.all([
     base44.asServiceRole.entities.CreatorProfile.filter({ id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.PersonaProfile.filter({ creator_profile_id: creatorProfileId, active: true }, "-updated_date", 1),
     base44.asServiceRole.entities.Fan.filter({ id: conversation.fan_id }, "-created_date", 1),
@@ -295,6 +309,10 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "-created_date", 1),
     base44.asServiceRole.entities.AutomationSettings.filter({ creator_profile_id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.FanvueConnection.filter({ creator_profile_id: creatorProfileId, status: "connected" }, "-created_date", 1),
+    // Larger window of FAN-only messages for the 3-strike explicit-request
+    // counter (recentMsgs is capped at 15 and mixes sender types, which can
+    // miss asks spread across a longer thread).
+    base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId, sender_type: "fan" }, "-created_date", 30),
   ]);
 
   const creator = creators[0];
@@ -468,7 +486,12 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
       ? recentQuestionTexts.map((q: string) => `- ${q}`).join("\n")
       : "(none yet)";
 
-    const ppvAllowed = settings.ppv_allowed && isPpvOfferAllowed(conversation, settings, recentMsgs);
+    // 3-strike explicit-request escalation: 3+ explicit asks = strong buying
+    // signal → force a PPV offer this turn (bypasses the time/message frequency
+    // gate, but still respects the operator's master ppv_allowed switch).
+    const explicitRequestCount = countExplicitRequests(fanMsgsForCount || []);
+    const forcePpv = !!settings.ppv_allowed && explicitRequestCount >= 3;
+    const ppvAllowed = !!settings.ppv_allowed && (isPpvOfferAllowed(conversation, settings, recentMsgs) || forcePpv);
     const ladderStr = getEnabledLadder(settings).map((c) => `$${c / 100}`).join(", ");
 
     // Inject conversation continuity context
@@ -603,6 +626,7 @@ ${bannedQuestionsStr}
 
 SALES CONTEXT:
 ${ppvAllowed ? `- PPV is ALLOWED right now. Offer it ONLY when the fan is clearly turned on.\n- Valid price rungs: ${ladderStr}\n- Start low ($10–12) for newer fans, climb toward $400 as rapport/heat grows. Pick the rung matching heat + relationship.` : `- PPV is NOT allowed right now (frequency limit or not enabled). Do not offer PPV.`}
+${forcePpv ? "\nFORCE PPV THIS TURN: The fan has now asked for explicit content 3+ times — that is a clear buying signal. You MUST offer a PPV in the LAST bubble this turn. Tease the content naturally (dirty, private, never salesy); the 5 pictures attach automatically so do NOT mention counts. Pick the price rung that matches this fan's heat + rapport (start low for newer fans, climb from there)." : ""}
 ${tooManyQuestions ? "\nNOTE: You have asked questions in your last several replies. Still end with a question this time, but make it a genuinely fresh angle — different topic, different kind of question — and do not repeat any banned recent question." : ""}
 
 RECENT CONVERSATION (oldest to newest):
@@ -629,7 +653,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
 
     // === PPV ESCALATION: if the cheap mini model offered a PPV, regenerate once
     // with full grok-3 for premium sales copy (the moment that converts). ===
-    if (ppvAllowed && aiResult?.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
+    if (ppvAllowed && ((aiResult?.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) || forcePpv)) {
       try {
         const escalated = await callGrok(systemPrompt, userPrompt, AI_JSON_SCHEMA, "grok-3-latest");
         if (escalated && (Array.isArray(escalated.replies) || typeof escalated.reply === "string")) {
@@ -719,6 +743,14 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       } catch (e) {
         console.error("[ai] anti-repetition regen failed:", (e as any).message);
       }
+    }
+
+    // === 3-STRIKE FORCED PPV FALLBACK ===
+    // If the fan asked for explicit content 3+ times but the AI still didn't
+    // return a price, guarantee a PPV goes out using the default/lowest rung.
+    if (forcePpv && !ppvCents) {
+      const fallbackCents = settings.default_ppv_cents || getEnabledLadder(settings)[0];
+      ppvCents = validatePpvCents(fallbackCents, settings);
     }
 
     // === RATE LIMIT CHECK ===
