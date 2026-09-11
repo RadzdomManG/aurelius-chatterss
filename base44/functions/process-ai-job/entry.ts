@@ -1,5 +1,5 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
-import { processAIJob } from "../../shared/ai-processor.ts";
+import { processAIJob } from "../../shared/ai-processor-v2.ts";
 
 export default async function(req) {
   let parsedBody = {};
