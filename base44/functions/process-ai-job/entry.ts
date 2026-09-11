@@ -27,7 +27,19 @@ export default async function(req) {
       return Response.json({ error: "conversationId or jobId is required" }, { status: 400 });
     }
 
-    const result = await processAIJob(base44, conversationId, jobId, null);
+    // If only jobId is provided, resolve conversationId from the job record
+    // so processAIJob can load the conversation.
+    let resolvedConversationId = conversationId;
+    if (!resolvedConversationId && jobId) {
+      try {
+        const job = await base44.asServiceRole.entities.AIJob.get(jobId);
+        resolvedConversationId = job.conversation_id;
+      } catch (e) {
+        return Response.json({ error: "Job not found" }, { status: 404 });
+      }
+    }
+
+    const result = await processAIJob(base44, resolvedConversationId, jobId, null);
 
     return Response.json({ success: true, ...result });
   } catch (error) {
