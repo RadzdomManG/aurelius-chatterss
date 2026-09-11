@@ -9,7 +9,7 @@
 //    re-run them so they auto-send (fixes the needs_approval-in-auto bug)
 // 5. Clean up duplicate messages (same external_uuid — keep oldest)
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
-import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor.ts";
+import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor-v2.ts";
 
 const STUCK_MS = 2 * 60 * 1000;
 const PENDING_STALE_MS = 15 * 1000;
