@@ -1,18 +1,42 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
-import { Image as ImageIcon, Film, Lock, X, Check, Loader2 } from "lucide-react";
+import { Image as ImageIcon, Film, Lock, X, Check, Loader2, ShieldAlert } from "lucide-react";
 
 /**
- * Compact vault media picker for the message composer. Loads the creator's
- * media via the fanvue-media backend function and lets the operator pick one
- * item to attach as locked (pay-to-view) content. Calls onPick(uuid, item)
- * when a media item is selected, or onPick(null) to clear.
+ * Extract thumbnail URL from Fanvue media object.
+ * Fanvue returns a `variants` array — each variant has variantType + url.
+ * Priority: thumbnail > thumbnail_gallery > main > any variant with url.
+ */
+function getMediaThumbnail(item) {
+  const variants = Array.isArray(item.variants) ? item.variants : [];
+  const thumb =
+    variants.find((v) => v.variantType === "thumbnail") ||
+    variants.find((v) => v.variantType === "thumbnail_gallery") ||
+    variants.find((v) => v.variantType === "main") ||
+    variants.find((v) => v.url);
+  if (thumb?.url) return thumb.url;
+  return (
+    item.thumbnailUrl ||
+    item.thumbnail_url ||
+    item.previewUrl ||
+    item.url ||
+    item.preview?.url ||
+    item.cover?.url ||
+    null
+  );
+}
+
+/**
+ * Vault media picker for the message composer. Loads the creator's media
+ * via the fanvue-media backend function (which requests variants=thumbnail,main).
+ * Thumbnails render from the variants array returned by the v1 API.
  */
 export default function VaultPicker({ creatorProfileId, selectedUuid, onPick }) {
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [open, setOpen] = React.useState(false);
+  const [imgErrors, setImgErrors] = React.useState({});
 
   const load = React.useCallback(async () => {
     try {
@@ -20,18 +44,19 @@ export default function VaultPicker({ creatorProfileId, selectedUuid, onPick }) 
       setError(null);
       const res = await base44.functions.invoke("fanvue-media", {
         creatorProfileId,
-        page: 1,
         size: 50,
       });
       if (res.data?.success) {
         setItems(res.data.data || []);
       } else if (res.data?.needsReconnect) {
         setError("Reconnect Fanvue (read:media scope required)");
+      } else if (res.data?.ageVerification) {
+        setError("Age verification required on Fanvue");
       } else {
         setError(res.data?.error || "Failed to load vault");
       }
     } catch (err) {
-      const msg = err.response?.data?.error || err.message || "Failed to load vault";
+      const msg = err?.response?.data?.error || err.message || "Failed to load vault";
       setError(msg);
     } finally {
       setLoading(false);
@@ -39,10 +64,37 @@ export default function VaultPicker({ creatorProfileId, selectedUuid, onPick }) 
   }, [creatorProfileId]);
 
   React.useEffect(() => {
-    if (open && items.length === 0 && !loading) load();
+    if (open && items.length === 0 && !loading && !error) load();
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedItem = items.find((i) => i.uuid === selectedUuid) || null;
+
+  const renderThumb = (item, size = "h-full w-full") => {
+    const thumb = getMediaThumbnail(item);
+    const key = item.uuid || item.id;
+    if (thumb && !imgErrors[key]) {
+      return (
+        <img
+          src={thumb}
+          alt=""
+          className={`${size} object-cover`}
+          loading="lazy"
+          onError={() => setImgErrors((prev) => ({ ...prev, [key]: true }))}
+        />
+      );
+    }
+    return (
+      <div className={`flex ${size} items-center justify-center bg-muted`}>
+        {imgErrors[key] ? (
+          <ShieldAlert className="h-4 w-4 text-muted-foreground/50" />
+        ) : item.type === "video" ? (
+          <Film className="h-4 w-4 text-muted-foreground" />
+        ) : (
+          <ImageIcon className="h-4 w-4 text-muted-foreground" />
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="border-b border-border bg-muted/30 px-4 py-2.5">
@@ -64,17 +116,7 @@ export default function VaultPicker({ creatorProfileId, selectedUuid, onPick }) 
       {selectedItem ? (
         <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/5 p-2">
           <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded">
-            {selectedItem.thumbnailUrl || selectedItem.thumbnail_url || selectedItem.previewUrl || selectedItem.url ? (
-              <img
-                src={selectedItem.thumbnailUrl || selectedItem.thumbnail_url || selectedItem.previewUrl || selectedItem.url}
-                alt=""
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-muted">
-                {selectedItem.type === "video" ? <Film className="h-4 w-4" /> : <ImageIcon className="h-4 w-4" />}
-              </div>
-            )}
+            {renderThumb(selectedItem)}
           </div>
           <span className="flex-1 truncate text-sm text-foreground">
             {selectedItem.title || selectedItem.name || "Locked media"}
@@ -111,22 +153,7 @@ export default function VaultPicker({ creatorProfileId, selectedUuid, onPick }) 
                   className="group relative aspect-square overflow-hidden rounded border border-border hover:border-primary"
                   title={item.title || item.name || "Media"}
                 >
-                  {item.thumbnailUrl || item.thumbnail_url || item.previewUrl || item.url ? (
-                    <img
-                      src={item.thumbnailUrl || item.thumbnail_url || item.previewUrl || item.url}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-muted">
-                      {item.type === "video" ? (
-                        <Film className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ImageIcon className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </div>
-                  )}
+                  {renderThumb(item)}
                   <div className="absolute inset-0 flex items-center justify-center bg-primary/0 opacity-0 transition group-hover:bg-primary/20 group-hover:opacity-100">
                     <Check className="h-4 w-4 text-white drop-shadow" />
                   </div>
