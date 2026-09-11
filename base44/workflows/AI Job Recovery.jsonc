@@ -1,13 +1,13 @@
 {
   "name": "AI Job Recovery",
-  "description": "Every 5 minutes, recovers stuck AI jobs (processing > 2min) and reprocesses stale pending jobs so no fan message goes unanswered if the webhook crashed mid-processing.",
+  "description": "Every minute, recovers stuck AI jobs and reprocesses stale pending jobs so no fan message goes unanswered if the webhook request ends mid-processing.",
   "trigger": {
     "condition": null,
     "config": {
       "trigger_type": "scheduled",
       "events": [],
       "schedule_mode": "recurring",
-      "cron_expression": "*/5 * * * *",
+      "cron_expression": "* * * * *",
       "one_time_date": null,
       "timezone": "Asia/Manila",
       "interval_value": null,
@@ -35,7 +35,7 @@
           "then": "end",
           "x-base44": {
             "title": "Recover stuck AI jobs",
-            "description": "Re-queue processing > 2min + stale pending > 30s"
+            "description": "Re-queue processing > 2min + stale pending > 15s"
           }
         }
       }
