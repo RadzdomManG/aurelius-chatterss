@@ -1,5 +1,11 @@
-// fanvue-webhook — v2: reads event type from X-Fanvue-Topic header, parses
-// both legacy flat and creator.* envelope payloads. (redeploy touch)
+// fanvue-webhook — handles ALL current Creator events.
+// Primary: creator.message.received (fan → creator), creator.message.sent (creator → fan).
+// Also: creator.message.deleted, creator.message.read, creator.message.reaction.
+// Business: creator.follow.created, creator.subscription.*, creator.payment.succeeded, etc.
+//
+// Idempotency: dedupes by Fanvue message UUID (persisted check).
+// Returns 2xx FAST — AI processing runs async via waitUntil.
+// Signature: X-Fanvue-Signature (HMAC-SHA256, t=... v0=... format).
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { secrets, waitUntil } from "base44:runtime";
 import { processAIJob } from "../../shared/ai-processor.ts";
@@ -7,15 +13,12 @@ import { getValidAccessToken, getChatForFan } from "../../shared/fanvue-api.ts";
 
 const TOLERANCE_SECONDS = 300;
 
-// Both the legacy flat event and the creator.* envelope are accepted. The
-// legacy event is deprecated but still fires during the migration window and
-// is what the Developer Area subscription currently delivers. The event type
-// for real Fanvue deliveries is carried in the `X-Fanvue-Topic` header — NOT in
-// the JSON body — which was the root cause of every real fan message being
-// discarded as "unknown".
 const INBOUND_EVENTS = new Set(["message.received", "creator.message.received"]);
+const OUTBOUND_EVENTS = new Set(["message.sent", "creator.message.sent"]);
+const DELETE_EVENTS = new Set(["creator.message.deleted", "message.deleted"]);
+const READ_EVENTS = new Set(["creator.message.read", "creator.message.read_by_fan", "message.read"]);
 
-function getHeader(req, name) {
+function getHeader(req: any, name: string): string | null {
   try {
     const direct = req.headers?.get?.(name);
     if (direct) return direct;
@@ -34,21 +37,8 @@ function getHeader(req, name) {
   return null;
 }
 
-function collectHeaders(req) {
-  try {
-    const entries = Array.from(req.headers.entries?.() || []);
-    return entries.map(([k, v]) => `${k}=${(v || "").slice(0, 80)}`);
-  } catch (e) {
-    try {
-      return Object.keys(req.headers || {}).map((k) => `${k}=${String(req.headers[k] || "").slice(0, 80)}`);
-    } catch (e2) {
-      return ["<headers unreadable>"];
-    }
-  }
-}
-
-async function verifySignature(rawBody, signatureHeader, secret) {
-  let timestamp, signature;
+async function verifySignature(rawBody: string, signatureHeader: string, secret: string) {
+  let timestamp: string | undefined, signature: string | undefined;
   for (const part of signatureHeader.split(",")) {
     const idx = part.indexOf("=");
     if (idx === -1) continue;
@@ -85,12 +75,7 @@ async function verifySignature(rawBody, signatureHeader, secret) {
   return diff === 0 ? { ok: true } : { ok: false, reason: "hmac mismatch" };
 }
 
-/**
- * Determine the event type. Real Fanvue deliveries carry it in the
- * `X-Fanvue-Topic` header (e.g. "message.received"). Fall back to body fields
- * for the creator.* envelope (`event.type`) and synthetic tests.
- */
-function detectEventType(req, parsed) {
+function detectEventType(req: any, parsed: any): string {
   const topic = getHeader(req, "X-Fanvue-Topic");
   if (topic) return topic;
   if (parsed) {
@@ -102,17 +87,17 @@ function detectEventType(req, parsed) {
 
 /**
  * Normalize a message event into a common shape. Handles BOTH:
- *   - creator.message.received (snake_case envelope: data.uuid, data.fan.uuid, ...)
- *   - legacy message.received (flat camelCase: messageUuid, sender.uuid, message.text, ...)
- * Optional fields are absent (not null) per Fanvue's contract.
+ *   - creator.* envelope (snake_case: data.uuid, data.fan.uuid, data.text, ...)
+ *   - legacy flat (camelCase: messageUuid, sender.uuid, message.text, ...)
+ * Sets isOutbound for creator.message.sent events.
  */
-function normalizeMessageEvent(parsed, eventType) {
-  const isNew = eventType === "creator.message.received";
+function normalizeMessageEvent(parsed: any, eventType: string) {
+  const isNew = eventType.startsWith("creator.");
   if (isNew) {
     const data = parsed.data || {};
-    if (data.sender && data.sender !== "fan") return null; // ignore outbound
     const fan = data.fan || {};
     const creator = data.creator || {};
+    const isOutbound = eventType === "creator.message.sent" || data.sender === "creator";
     return {
       msgUuid: data.uuid || null,
       msgText: data.text || "",
@@ -125,13 +110,15 @@ function normalizeMessageEvent(parsed, eventType) {
       mediaUuids: data.media_uuids || [],
       ppvCents: data.price != null ? data.price : null,
       unreadCount: data.unread_messages_count != null ? data.unread_messages_count : null,
+      isOutbound,
     };
   }
 
-  // Legacy flat message.received
+  // Legacy flat format
   const msg = parsed.message || {};
   const sender = parsed.sender || {};
   const senderAvatar = sender.avatarUrl || (sender.avatarUri && sender.avatarUri.url) || "";
+  const isOutbound = eventType === "message.sent" || parsed.senderType === "creator";
   return {
     msgUuid: parsed.messageUuid || msg.uuid || null,
     msgText: msg.text || parsed.text || "",
@@ -144,10 +131,11 @@ function normalizeMessageEvent(parsed, eventType) {
     mediaUuids: msg.mediaUuids || parsed.mediaUuids || [],
     ppvCents: msg.price != null ? msg.price : (parsed.price != null ? parsed.price : null),
     unreadCount: parsed.unreadMessagesCount != null ? parsed.unreadMessagesCount : null,
+    isOutbound,
   };
 }
 
-async function hydrateIdentityIfNeeded(base44, connection, normalized) {
+async function hydrateIdentityIfNeeded(base44: any, connection: any, normalized: any) {
   if (normalized.senderName || normalized.senderHandle) return;
   if (!normalized.senderUuid) return;
   try {
@@ -159,14 +147,14 @@ async function hydrateIdentityIfNeeded(base44, connection, normalized) {
       normalized.senderAvatar = user.avatar_url || user.avatarUrl || normalized.senderAvatar || "";
     }
   } catch (err) {
-    console.error("[webhook] identity hydration failed:", err.message);
+    console.error("[webhook] identity hydration failed:", (err as any).message);
   }
 }
 
-async function processMessageReceived(base44, event, eventType) {
+async function processMessageReceived(base44: any, event: any, eventType: string) {
   const normalized = normalizeMessageEvent(event, eventType);
   if (!normalized) return;
-  const { msgUuid, msgText, sentAt, senderUuid, mediaUuids, ppvCents, unreadCount } = normalized;
+  const { msgUuid, msgText, sentAt, senderUuid, mediaUuids, ppvCents, unreadCount, isOutbound } = normalized;
   if (!senderUuid || !normalized.recipientUuid) return;
 
   const connections = await base44.asServiceRole.entities.FanvueConnection.filter(
@@ -178,13 +166,18 @@ async function processMessageReceived(base44, event, eventType) {
   if (!connection) return;
 
   const creatorProfileId = connection.creator_profile_id;
-  await hydrateIdentityIfNeeded(base44, connection, normalized);
+
+  // For inbound messages, hydrate identity if missing
+  if (!isOutbound) {
+    await hydrateIdentityIfNeeded(base44, connection, normalized);
+  }
 
   const senderName = normalized.senderName || "Unknown Fan";
   const senderHandle = normalized.senderHandle || "";
   const senderAvatar = normalized.senderAvatar || "";
 
-  let fan;
+  // Upsert fan
+  let fan: any;
   const existingFans = await base44.asServiceRole.entities.Fan.filter(
     { creator_profile_id: creatorProfileId, external_uuid: senderUuid },
     "-created_date",
@@ -192,7 +185,7 @@ async function processMessageReceived(base44, event, eventType) {
   );
   if (existingFans[0]) {
     fan = existingFans[0];
-    const patch = {};
+    const patch: any = {};
     if (senderName && senderName !== "Unknown Fan" && senderName !== fan.display_name) patch.display_name = senderName;
     if (senderHandle && senderHandle !== fan.handle) patch.handle = senderHandle;
     if (senderAvatar && senderAvatar !== fan.avatar_url) patch.avatar_url = senderAvatar;
@@ -207,7 +200,8 @@ async function processMessageReceived(base44, event, eventType) {
     });
   }
 
-  let conversation;
+  // Upsert conversation (one per creator + fan UUID)
+  let conversation: any;
   const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
     { creator_profile_id: creatorProfileId, fan_id: fan.id },
     "-created_date",
@@ -224,8 +218,8 @@ async function processMessageReceived(base44, event, eventType) {
     });
   }
 
-  // Dedup by Fanvue message UUID — prevents double-processing when both the
-  // legacy and creator.* events fire during the migration window.
+  // Dedup by Fanvue message UUID — prevents double-processing from retries,
+  // concurrent deliveries, or sync + webhook races.
   if (msgUuid) {
     const existingMsgs = await base44.asServiceRole.entities.Message.filter(
       { external_uuid: msgUuid },
@@ -235,11 +229,12 @@ async function processMessageReceived(base44, event, eventType) {
     if (existingMsgs[0]) return;
   }
 
+  const senderType = isOutbound ? "creator" : "fan";
   await base44.asServiceRole.entities.Message.create({
     creator_profile_id: creatorProfileId,
     conversation_id: conversation.id,
     external_uuid: msgUuid || null,
-    sender_type: "fan",
+    sender_type: senderType,
     body: msgText,
     media: mediaUuids,
     ppv_cents: ppvCents,
@@ -247,43 +242,76 @@ async function processMessageReceived(base44, event, eventType) {
     fanvue_created_at: sentAt,
   });
 
-  const nextUnread = unreadCount != null ? unreadCount : (conversation.unread_count || 0) + 1;
+  // Update conversation metadata
+  const nextUnread = isOutbound ? (conversation.unread_count || 0) : (unreadCount != null ? unreadCount : (conversation.unread_count || 0) + 1);
   await base44.asServiceRole.entities.Conversation.update(conversation.id, {
     status: "active",
     unread_count: nextUnread,
     last_message_at: sentAt,
     last_message_preview: msgText || (mediaUuids.length ? "[media]" : ""),
-    last_sender_type: "fan",
+    last_sender_type: senderType,
   });
 
   await base44.asServiceRole.entities.ActivityLog.create({
     creator_profile_id: creatorProfileId,
     conversation_id: conversation.id,
-    event_type: "message.persisted",
+    event_type: isOutbound ? "message.persisted_outbound" : "message.persisted",
     status: "info",
-    message: `New message from ${senderName}`,
+    message: `${isOutbound ? "Creator sent" : "New message from"} ${senderName}`,
     metadata: { messageUuid: msgUuid, event: eventType, hydrated: !!(senderName && senderName !== "Unknown Fan") },
   });
 
-  // Process AI asynchronously after the 2xx is returned.
-  try {
-    waitUntil(processAIJob(base44, conversation.id, null, msgUuid));
-  } catch (aiErr) {
-    console.error("[webhook] AI enqueue failed:", aiErr.message);
+  // ONLY trigger AI for inbound fan messages — never for outbound creator messages
+  if (!isOutbound) {
+    try {
+      waitUntil(processAIJob(base44, conversation.id, null, msgUuid));
+    } catch (aiErr) {
+      console.error("[webhook] AI enqueue failed:", (aiErr as any).message);
+    }
   }
 }
 
-export default async function (req) {
+async function processMessageDeleted(base44: any, event: any) {
+  const data = event.data || event;
+  const msgUuid = data.uuid || data.messageUuid;
+  if (!msgUuid) return;
+  try {
+    const msgs = await base44.asServiceRole.entities.Message.filter({ external_uuid: msgUuid }, "-created_date", 1);
+    if (msgs[0]) await base44.asServiceRole.entities.Message.delete(msgs[0].id);
+    await base44.asServiceRole.entities.ActivityLog.create({
+      event_type: "message.deleted",
+      status: "info",
+      message: `Message deleted: ${msgUuid}`,
+    });
+  } catch (e) {}
+}
+
+async function processMessageRead(base44: any, event: any) {
+  const data = event.data || event;
+  const fanUuid = data.fan?.uuid || data.userUuid;
+  if (!fanUuid) return;
+  try {
+    const fans = await base44.asServiceRole.entities.Fan.filter({ external_uuid: fanUuid }, "-created_date", 1);
+    if (!fans[0]) return;
+    const convos = await base44.asServiceRole.entities.Conversation.filter({ fan_id: fans[0].id }, "-created_date", 1);
+    if (convos[0]) {
+      await base44.asServiceRole.entities.Conversation.update(convos[0].id, { unread_count: 0 });
+    }
+  } catch (e) {}
+}
+
+export default async function (req: Request): Promise<Response> {
   const rawBody = await req.text();
   const signatureHeader = getHeader(req, "X-Fanvue-Signature");
   const topicHeader = getHeader(req, "X-Fanvue-Topic");
 
-  let parsed = null;
+  let parsed: any = null;
   try {
     parsed = JSON.parse(rawBody);
   } catch (e) {}
   const eventTypeHint = topicHeader || (parsed && (parsed.type || parsed.event)) || "unknown";
 
+  // Log webhook receipt for diagnostics (async, non-blocking)
   try {
     const diagBase44 = createClientFromRequest(req);
     waitUntil(
@@ -296,7 +324,6 @@ export default async function (req) {
           topicHeader: topicHeader || null,
           signaturePresent: !!signatureHeader,
           bodyLength: rawBody.length,
-          headers: collectHeaders(req),
           bodyPreview: rawBody.slice(0, 500),
         },
       })
@@ -331,19 +358,26 @@ export default async function (req) {
     const event = parsed || JSON.parse(rawBody);
     const eventType = detectEventType(req, event);
 
-    if (INBOUND_EVENTS.has(eventType)) {
+    if (INBOUND_EVENTS.has(eventType) || OUTBOUND_EVENTS.has(eventType)) {
       const base44 = createClientFromRequest(req);
-      // Persist synchronously (fast), then return 2xx. AI runs async via waitUntil.
       await processMessageReceived(base44, event, eventType);
+    } else if (DELETE_EVENTS.has(eventType)) {
+      const base44 = createClientFromRequest(req);
+      await processMessageDeleted(base44, event);
+    } else if (READ_EVENTS.has(eventType)) {
+      const base44 = createClientFromRequest(req);
+      await processMessageRead(base44, event);
     } else {
+      // Log other business events (follow, subscription, payment, etc.)
       waitUntil(
         (async () => {
           try {
             const b = createClientFromRequest(req);
             await b.asServiceRole.entities.ActivityLog.create({
-              event_type: "webhook.ignored",
+              event_type: `webhook.${eventType}`,
               status: "info",
-              message: `Verified non-message event: ${eventType || "unknown"}`,
+              message: `Verified event: ${eventType}`,
+              metadata: { bodyPreview: rawBody.slice(0, 300) },
             });
           } catch (e) {}
         })()
@@ -352,6 +386,6 @@ export default async function (req) {
 
     return Response.json({ received: true, verified: true, eventType });
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: (error as any).message }, { status: 500 });
   }
 }

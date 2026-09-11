@@ -1,8 +1,7 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
-import { toast } from "sonner";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
   BarChart3, MessageSquare, Bot, User, Zap, Clock, TrendingUp, DollarSign,
@@ -30,22 +29,26 @@ export default function Analytics() {
   const [subscribers, setSubscribers] = React.useState([]);
   const [percentile, setPercentile] = React.useState(null);
   const [localMetrics, setLocalMetrics] = React.useState(null);
+  const [insightErrors, setInsightErrors] = React.useState({});
 
   React.useEffect(() => {
     loadAll();
   }, []);
 
-  const fetchInsights = async (resource, extra = {}) => {
+  // Per-resource safe fetch — one endpoint failure does NOT blank the page.
+  const safeFetch = async (resource, extra = {}) => {
     try {
       const res = await base44.functions.invoke("fanvue-insights", { resource, ...extra });
       return res;
     } catch (e) {
       const code = e?.response?.data?.code || e?.code;
-      if (code === "MISSING_SCOPE") {
-        setScopeError(e.response?.data?.missing || ["read:insights"]);
-        return null;
+      const missing = e?.response?.data?.missing || [];
+      if (code === "MISSING_SCOPE" && missing.includes("read:insights")) {
+        setScopeError(missing);
       }
-      throw e;
+      setInsightErrors((prev) => ({ ...prev, [resource]: e?.response?.data?.error || e.message || "Failed" }));
+      console.error(`Insights ${resource} failed:`, e);
+      return null;
     }
   };
 
@@ -95,7 +98,6 @@ export default function Analytics() {
         avgResponseTime: responseCount > 0 ? Math.round(totalResponseTime / responseCount / 1000) : 0,
       });
 
-      // Real Fanvue insights (requires connected account + read:insights)
       if (!activeConn) {
         setLoading(false);
         return;
@@ -107,13 +109,14 @@ export default function Analytics() {
         return;
       }
 
+      // Each insight loads independently — one failure does NOT affect others
       const [sumRes, topRes, retRes, unsubRes, subRes, pctRes] = await Promise.all([
-        fetchInsights("summary", { granularity: "day" }),
-        fetchInsights("topSpenders", { size: 10 }),
-        fetchInsights("retention", { periods: 6 }),
-        fetchInsights("unsubscribe"),
-        fetchInsights("subscribers", { size: 30 }),
-        fetchInsights("percentile"),
+        safeFetch("summary", { granularity: "day" }),
+        safeFetch("topSpenders", { size: 10 }),
+        safeFetch("retention", { periods: 6 }),
+        safeFetch("unsubscribe"),
+        safeFetch("subscribers", { size: 30 }),
+        safeFetch("percentile"),
       ]);
 
       if (sumRes?.data) setSummary(sumRes.data);
@@ -124,7 +127,6 @@ export default function Analytics() {
       if (pctRes?.data) setPercentile(pctRes.data);
     } catch (err) {
       console.error("Failed to load analytics:", err);
-      toast.error("Failed to load insights");
     } finally {
       setLoading(false);
     }
@@ -140,7 +142,6 @@ export default function Analytics() {
 
   const hasConnection = conn?.status === "connected";
 
-  // Scope gate — permission required state with reconnect CTA
   if (scopeError) {
     return (
       <div className="h-full overflow-y-auto scrollbar-thin">
@@ -153,8 +154,12 @@ export default function Analytics() {
             <p className="mb-1 text-sm text-muted-foreground">
               Analytics needs the <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{scopeError.join(", ")}</code> scope.
             </p>
-            <p className="mb-5 max-w-md text-xs text-muted-foreground">
-              Re-authorize your Fanvue account with this scope enabled to unlock real earnings, top spenders, retention and subscriber trends.
+            <p className="mb-2 max-w-md text-xs text-muted-foreground">
+              Enabling <code className="rounded bg-muted px-1">read:insights</code> in Fanvue Developer settings is not enough —
+              your connected access token must actually have this scope. Re-authorize your Fanvue account to grant it.
+            </p>
+            <p className="mb-5 text-xs text-muted-foreground/70">
+              Current granted scopes: {conn?.granted_scopes?.join(", ") || "none"}
             </p>
             <a href="/models" className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
               Go to Models to reconnect
@@ -201,22 +206,23 @@ export default function Analytics() {
     : [];
 
   const earningsCards = [
-    { label: "This Month (gross)", value: fmtMoney(thisMonth.gross), icon: DollarSign, color: "text-success", sub: fmtPct(thisMonth.grossChangePercentage) },
-    { label: "This Month (net)", value: fmtMoney(thisMonth.net), icon: DollarSign, color: "text-success", sub: fmtPct(thisMonth.netChangePercentage) },
-    { label: "All-Time (gross)", value: fmtMoney(allTime.gross), icon: TrendingUp, color: "text-primary" },
-    { label: "All-Time (net)", value: fmtMoney(allTime.net), icon: TrendingUp, color: "text-primary" },
-    { label: "Earnings Percentile", value: percentile?.percentile != null ? `Top ${Math.max(1, Math.round(100 - percentile.percentile))}%` : "—", icon: Gauge, color: "text-primary" },
-    { label: "Active Subscribers", value: subscribers.length ? subscribers[subscribers.length - 1]?.total ?? "—" : "—", icon: Users, color: "text-primary" },
+    { label: "This Month (gross)", value: fmtMoney(thisMonth.gross), icon: DollarSign, color: "text-success", sub: fmtPct(thisMonth.grossChangePercentage), err: insightErrors.summary },
+    { label: "This Month (net)", value: fmtMoney(thisMonth.net), icon: DollarSign, color: "text-success", sub: fmtPct(thisMonth.netChangePercentage), err: insightErrors.summary },
+    { label: "All-Time (gross)", value: fmtMoney(allTime.gross), icon: TrendingUp, color: "text-primary", err: insightErrors.summary },
+    { label: "All-Time (net)", value: fmtMoney(allTime.net), icon: TrendingUp, color: "text-primary", err: insightErrors.summary },
+    { label: "Earnings Percentile", value: percentile?.percentile != null ? `Top ${Math.max(1, Math.round(100 - percentile.percentile))}%` : "—", icon: Gauge, color: "text-primary", err: insightErrors.percentile },
+    { label: "Active Subscribers", value: subscribers.length ? subscribers[subscribers.length - 1]?.total ?? "—" : "—", icon: Users, color: "text-primary", err: insightErrors.subscribers },
   ];
-
-  const sourceColors = ["#7c5cff", "#36c69a", "#4a9fd6", "#e0a93a", "#e05a6a", "#9b6cf0", "#6b8fb5"];
 
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
       <div className="mx-auto max-w-5xl px-6 py-8">
         <h1 className="mb-1 font-heading text-3xl text-foreground">Analytics</h1>
-        <p className="mb-6 text-sm text-muted-foreground">
+        <p className="mb-2 text-sm text-muted-foreground">
           {creator?.display_name ? `${creator.display_name} · ` : ""}Real Fanvue insights + Aurelius operational metrics
+        </p>
+        <p className="mb-6 text-xs text-muted-foreground/70">
+          Granted scopes: {conn?.granted_scopes?.join(", ") || "none"} · API version 2025-06-26
         </p>
 
         {/* Aurelius metrics */}
@@ -245,15 +251,21 @@ export default function Analytics() {
             return (
               <div key={card.label} className="rounded-lg border border-border bg-card p-4">
                 <div className="flex items-center gap-2"><Icon className={`h-4 w-4 ${card.color}`} /><span className="text-xs text-muted-foreground">{card.label}</span></div>
-                <p className="mt-2 text-2xl font-heading text-foreground">{card.value}</p>
-                {card.sub && <p className={`mt-1 text-xs ${card.sub.startsWith("+") ? "text-success" : card.sub.startsWith("-") ? "text-destructive" : "text-muted-foreground"}`}>{card.sub} vs last month</p>}
+                {card.err ? (
+                  <p className="mt-2 text-xs text-destructive">{card.err}</p>
+                ) : (
+                  <>
+                    <p className="mt-2 text-2xl font-heading text-foreground">{card.value}</p>
+                    {card.sub && <p className={`mt-1 text-xs ${card.sub.startsWith("+") ? "text-success" : card.sub.startsWith("-") ? "text-destructive" : "text-muted-foreground"}`}>{card.sub} vs last month</p>}
+                  </>
+                )}
               </div>
             );
           })}
         </div>
 
         {/* Earnings over time */}
-        {overTime.length > 0 && (
+        {overTime.length > 0 && !insightErrors.summary && (
           <div className="mb-8 rounded-lg border border-border bg-card p-4">
             <h3 className="mb-3 text-sm font-medium text-foreground">Earnings Over Time</h3>
             <div className="h-56">
@@ -261,16 +273,16 @@ export default function Analytics() {
                 <AreaChart data={overTime.map((o) => ({ date: fmtDate(o.periodStart), gross: o.gross / 100, net: o.net / 100 }))}>
                   <defs>
                     <linearGradient id="grossGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#7c5cff" stopOpacity={0.4} />
-                      <stop offset="95%" stopColor="#7c5cff" stopOpacity={0} />
+                      <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} />
                   <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} tickFormatter={(v) => `$${v}`} />
                   <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} formatter={(v) => `$${v}`} />
-                  <Area type="monotone" dataKey="gross" name="Gross" stroke="#7c5cff" strokeWidth={2} fill="url(#grossGrad)" />
-                  <Area type="monotone" dataKey="net" name="Net" stroke="#36c69a" strokeWidth={2} fill="transparent" />
+                  <Area type="monotone" dataKey="gross" name="Gross" stroke="hsl(var(--chart-1))" strokeWidth={2} fill="url(#grossGrad)" />
+                  <Area type="monotone" dataKey="net" name="Net" stroke="hsl(var(--chart-2))" strokeWidth={2} fill="transparent" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -281,54 +293,67 @@ export default function Analytics() {
         <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-border bg-card p-4">
             <h3 className="mb-3 text-sm font-medium text-foreground">Breakdown by Source (net)</h3>
-            <div className="space-y-2">
-              {Object.entries(breakdown).map(([key, val]) => (
-                <div key={key} className="flex items-center justify-between text-sm">
-                  <span className="capitalize text-muted-foreground">{key}</span>
-                  <span className="font-medium text-foreground">{fmtMoney(val.net)}</span>
-                </div>
-              ))}
-              {Object.keys(breakdown).length === 0 && <p className="text-xs text-muted-foreground">No breakdown returned.</p>}
-            </div>
+            {insightErrors.summary ? (
+              <p className="text-xs text-destructive">{insightErrors.summary}</p>
+            ) : (
+              <div className="space-y-2">
+                {Object.entries(breakdown).map(([key, val]) => (
+                  <div key={key} className="flex items-center justify-between text-sm">
+                    <span className="capitalize text-muted-foreground">{key}</span>
+                    <span className="font-medium text-foreground">{fmtMoney(val.net)}</span>
+                  </div>
+                ))}
+                {Object.keys(breakdown).length === 0 && <p className="text-xs text-muted-foreground">No breakdown returned.</p>}
+              </div>
+            )}
           </div>
           <div className="rounded-lg border border-border bg-card p-4">
             <h3 className="mb-3 text-sm font-medium text-foreground">Subscriber Trend</h3>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={subscribers.map((s) => ({ date: fmtDate(s.date), new: s.newSubscribersCount, cancelled: s.cancelledSubscribersCount }))}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} />
-                  <Bar dataKey="new" name="New" fill="#36c69a" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="cancelled" name="Cancelled" fill="#e05a6a" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {insightErrors.subscribers ? (
+              <p className="text-xs text-destructive">{insightErrors.subscribers}</p>
+            ) : subscribers.length > 0 ? (
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={subscribers.map((s) => ({ date: fmtDate(s.date), new: s.newSubscribersCount, cancelled: s.cancelledSubscribersCount }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} />
+                    <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} />
+                    <Bar dataKey="new" name="New" fill="hsl(var(--chart-2))" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="cancelled" name="Cancelled" fill="hsl(var(--chart-5))" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : <p className="text-xs text-muted-foreground">No subscriber data.</p>}
           </div>
         </div>
 
-        {/* Top spenders + Retention + Unsubscribe */}
+        {/* Top spenders + Retention + Unsubscribe — each independent */}
         <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="rounded-lg border border-border bg-card p-4">
             <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground"><Crown className="h-4 w-4 text-warning" /> Top Spenders</h3>
-            <div className="space-y-2">
-              {topSpenders.slice(0, 8).map((s, i) => (
-                <div key={s.user?.uuid || i} className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="text-xs text-muted-foreground">{i + 1}</span>
-                    <span className="truncate text-foreground">{s.user?.displayName || s.user?.handle || "Unknown"}</span>
+            {insightErrors.topSpenders ? (
+              <p className="text-xs text-destructive">{insightErrors.topSpenders}</p>
+            ) : topSpenders.length > 0 ? (
+              <div className="space-y-2">
+                {topSpenders.slice(0, 8).map((s, i) => (
+                  <div key={s.user?.uuid || i} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="text-xs text-muted-foreground">{i + 1}</span>
+                      <span className="truncate text-foreground">{s.user?.displayName || s.user?.handle || "Unknown"}</span>
+                    </div>
+                    <span className="font-medium text-foreground">{fmtMoney(s.gross)}</span>
                   </div>
-                  <span className="font-medium text-foreground">{fmtMoney(s.gross)}</span>
-                </div>
-              ))}
-              {topSpenders.length === 0 && <p className="text-xs text-muted-foreground">No top-spenders data.</p>}
-            </div>
+                ))}
+              </div>
+            ) : <p className="text-xs text-muted-foreground">No top-spenders data.</p>}
           </div>
 
           <div className="rounded-lg border border-border bg-card p-4">
             <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground"><HeartCrack className="h-4 w-4 text-destructive" /> Retention</h3>
-            {latestRet ? (
+            {insightErrors.retention ? (
+              <p className="text-xs text-destructive">{insightErrors.retention}</p>
+            ) : latestRet ? (
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between"><span className="text-muted-foreground">Churn rate</span><span className="font-medium text-foreground">{(latestRet.paidFanChurnRate * 100).toFixed(1)}%</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Net retention</span><span className="font-medium text-foreground">{(latestRet.paidFanNrr * 100).toFixed(1)}%</span></div>
@@ -341,7 +366,9 @@ export default function Analytics() {
 
           <div className="rounded-lg border border-border bg-card p-4">
             <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground"><AlertTriangle className="h-4 w-4 text-warning" /> Unsubscribe Reasons</h3>
-            {unsubscribe?.reasons?.length ? (
+            {insightErrors.unsubscribe ? (
+              <p className="text-xs text-destructive">{insightErrors.unsubscribe}</p>
+            ) : unsubscribe?.reasons?.length ? (
               <div className="space-y-2 text-sm">
                 {unsubscribe.reasons.slice(0, 6).map((r, i) => (
                   <div key={i} className="flex items-center justify-between">

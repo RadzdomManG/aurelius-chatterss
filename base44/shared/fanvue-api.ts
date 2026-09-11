@@ -86,21 +86,30 @@ export async function sendFanvueMessage(accessToken, userUuid, text, price = nul
   if (price) body.price = price;
   if (media?.mediaUuids?.length) body.mediaUuids = media.mediaUuids;
   if (media?.mediaPreviewUuid) body.mediaPreviewUuid = media.mediaPreviewUuid;
-  return apiCall(`/chats/${userUuid}/message`, accessToken, {
+  return apiCall(`/v1/chats/${userUuid}/message`, accessToken, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function getMedia(accessToken, page = 1, size = 50) {
-  const params = new URLSearchParams({ page: String(page), size: String(size) });
-  return apiCall(`/media?${params}`, accessToken);
+// v1 media endpoint — MUST request variants=thumbnail,main and status=ready
+// to get usable thumbnail URLs. Without variants, the response returns only
+// minimal media objects with no signed URLs.
+export async function getMedia(accessToken, opts = {}) {
+  const params = new URLSearchParams({
+    size: String(opts.size || 50),
+    variants: opts.variants || "thumbnail,main",
+    status: "ready",
+  });
+  if (opts.cursor) params.set("cursor", opts.cursor);
+  if (opts.folderName) params.set("folderName", opts.folderName);
+  return apiCall(`/v1/media?${params}`, accessToken);
 }
 
-export async function getVaultMedia(accessToken, folderId = null, page = 1, size = 50) {
-  const params = new URLSearchParams({ page: String(page), size: String(size) });
-  if (folderId) params.set("folderId", folderId);
-  return apiCall(`/vault/media?${params}`, accessToken);
+export async function getVaultMedia(accessToken, folderName = null, size = 50) {
+  // Use /v1/media with folderName param (NOT /v1/vault/folders/{name}/media
+  // which returns lightweight objects without variant URLs).
+  return getMedia(accessToken, { folderName, size });
 }
 
 /**

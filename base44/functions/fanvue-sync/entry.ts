@@ -235,6 +235,33 @@ export default async function(req) {
       }
     }
 
+    // === Phase 3: Post-sync dedup ===
+    // Remove duplicate messages (same external_uuid) that may have been created
+    // by concurrent webhook + sync processing. Keep the oldest, delete the rest.
+    const postSyncMsgs = await base44.asServiceRole.entities.Message.filter(
+      { creator_profile_id: creatorProfileIdFinal },
+      "-created_date",
+      5000
+    );
+    const uuidGroups: Record<string, any[]> = {};
+    postSyncMsgs.forEach((m) => {
+      if (m.external_uuid) {
+        if (!uuidGroups[m.external_uuid]) uuidGroups[m.external_uuid] = [];
+        uuidGroups[m.external_uuid].push(m);
+      }
+    });
+    let dedupCount = 0;
+    for (const [, group] of Object.entries(uuidGroups)) {
+      if (group.length <= 1) continue;
+      group.sort((a, b) => new Date(a.created_date).getTime() - new Date(b.created_date).getTime());
+      for (const m of group.slice(1)) {
+        try {
+          await base44.asServiceRole.entities.Message.delete(m.id);
+          dedupCount++;
+        } catch (e) {}
+      }
+    }
+
     // Update sync status
     await base44.asServiceRole.entities.FanvueConnection.update(connection.id, {
       sync_status: "completed",
