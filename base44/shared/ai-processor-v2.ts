@@ -50,7 +50,9 @@ function validatePpvCents(suggested: number, settings: any): number | null {
 
 // ---- SINGLE CANONICAL AUTOMATION MODE RESOLVER ----
 export function resolveAutomationMode(creator: any, conversation: any, settings: any): "STOPPED" | "DRAFT" | "AUTO" {
-  if (settings?.enabled === false) return "STOPPED";
+  // automation_mode (per-fan override → global creator mode) is the single
+  // source of truth. The old `settings.enabled` gate is removed so clicking
+  // Off/Draft/Auto takes effect immediately with no hidden second switch.
   const mode = conversation?.automation_mode_override || creator?.automation_mode || "off";
   if (mode === "off") return "STOPPED";
   if (mode === "draft") return "DRAFT";
@@ -232,7 +234,7 @@ const AI_JSON_SCHEMA = {
         next_goal: { type: "string" },
       },
     },
-    replies: { type: "array", items: { type: "string" }, description: "1-3 short chat bubbles. Each bubble is ONE single line with NO line breaks. React first, then build. If offering PPV, put the offer in the LAST bubble." },
+    replies: { type: "array", items: { type: "string" }, description: "1-3 short chat bubbles. Each bubble is ONE single line with NO line breaks. React first, then build. Always end the final bubble with a mood-appropriate question; never repeat a recent question. If offering PPV, put the offer in the LAST bubble." },
     confidence: { type: "number" },
     intent: { type: "string" },
     sentiment: { type: "string" },
@@ -313,6 +315,12 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
 
   // === SINGLE CANONICAL MODE RESOLVER ===
   const autoMode = resolveAutomationMode(creator, conversation, settings);
+  // Data-migration: the old settings.enabled gate is gone, but if an existing
+  // setup still has enabled=false, flip it true so the UI and re-engagement
+  // reflect the now-authoritative automation_mode. Best-effort, never blocks.
+  if (autoMode !== "STOPPED" && settings?.id && settings.enabled === false) {
+    try { await base44.asServiceRole.entities.AutomationSettings.update(settings.id, { enabled: true }); } catch (e) {}
+  }
   if (autoMode === "STOPPED") return await skipJob("AUTOMATION_STOPPED");
   if (!persona) return await skipJob("PERSONA_NOT_FOUND");
   if (!connection) return await skipJob("FANVUE_CONTACTABILITY");
@@ -445,6 +453,21 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     const recentQuestions = recentCreatorMsgs.slice(-5).filter((m: any) => /\?/.test(m.body || ""));
     const tooManyQuestions = recentQuestions.length >= 3;
 
+    // Banned recent questions: extract the question portion of recent creator
+    // replies so the AI never re-asks the same question or question style twice.
+    const recentQuestionTexts = recentCreatorMsgs
+      .slice(-10)
+      .map((m: any) => String(m.body || "").trim())
+      .filter((b: string) => b.includes("?"))
+      .map((b: string) => {
+        const segs = b.split(/[.!?]/).map((s: string) => s.trim()).filter(Boolean);
+        return segs[segs.length - 1] || b;
+      })
+      .slice(-6);
+    const bannedQuestionsStr = recentQuestionTexts.length > 0
+      ? recentQuestionTexts.map((q: string) => `- ${q}`).join("\n")
+      : "(none yet)";
+
     const ppvAllowed = settings.ppv_allowed && isPpvOfferAllowed(conversation, settings, recentMsgs);
     const ladderStr = getEnabledLadder(settings).map((c) => `$${c / 100}`).join(", ");
 
@@ -486,9 +509,9 @@ You sound like a REAL girl texting late at night — casual, lowercase, slang, m
 
 Conversation flow:
 - React first, then build. Bubble 1 reacts to what he said; bubble 2 escalates.
-- Build soft -> teasing -> raw and explicit as heat grows. Match his energy.
-- End most messages with a question to keep the chat going — but sometimes DON'T (feels more natural).
-- PPV teasing feels like sharing something private and dirty — NEVER sound like you're selling.
+- SLOW RAMP: never jump straight to explicit. Escalate gradually — react → tease → build heat → explicit — and always match the fan's energy. When the fan is clearly heated/explicit, be genuinely dirty and detailed (use the dirty tone examples below, vary the wording every time). When the chat is casual, stay casual and playful.
+- ALWAYS end the reply with a question — across your bubbles there must be at least one question, usually the last bubble. The question's tone follows the mood: casual/playful in light chat, teasing/dirty when heated. NEVER ask the same question or question style you already asked recently (banned recent questions are provided below) — vary the angle every single time.
+- SUBTLE SALES: PPV and tip nudges must feel like sharing something private or playful — NEVER a sales pitch and NEVER a direct request. Tip nudges are VERBAL ONLY (playfully hinting he can spoil/tip you); never ask for a tip outright, never mention the platform or API. Keep PPV in the LAST bubble only, never offer it cold or early, and never mention picture counts.
 
 BUBBLE RULES (CRITICAL):
 - NEVER press enter inside a bubble. Each bubble is ONE single line, no line breaks.
@@ -540,6 +563,7 @@ Offer PPV ONLY when the fan is clearly turned on / horny (heat level: suggestive
 - 5 pictures are attached to every PPV automatically (the system handles it) — do NOT mention picture counts in your message; just tease the content naturally and privately.
 - Do NOT send PPV just because N messages have passed. Only when the fan's heat is real.
 - PPV should feel like sharing something private, never a sales pitch.
+- Tip nudges: playfully hint he can spoil or tip you — verbal only, never a direct request, never mentioning the platform. Only when the mood is warm/playful, never pushy or repeated often.
 - NEVER suggest meetups, real-life contact, or moving off Fanvue. Refuse or deflect any request for meets, numbers, or other platforms.
 - If the fan appears to be a student or school-related, do NOT escalate to sexual content or PPV — keep it friendly and non-sexual.
 
@@ -573,6 +597,9 @@ YOUR RECENT REPLIES TO THIS FAN:
 ${recentCreatorText || "(no recent replies)"}
 
 BANNED PHRASES (appeared in recent replies — do NOT reuse any): ${bannedStr}
+
+BANNED RECENT QUESTIONS (do NOT re-ask these or anything close — vary the angle every time):
+${bannedQuestionsStr}
 
 SALES CONTEXT:
 ${ppvAllowed ? `- PPV is ALLOWED right now. Offer it ONLY when the fan is clearly turned on.\n- Valid price rungs: ${ladderStr}\n- Start low ($10–12) for newer fans, climb toward $400 as rapport/heat grows. Pick the rung matching heat + relationship.` : `- PPV is NOT allowed right now (frequency limit or not enabled). Do not offer PPV.`}

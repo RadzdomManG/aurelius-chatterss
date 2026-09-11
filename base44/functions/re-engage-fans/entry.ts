@@ -8,8 +8,10 @@ import { processAIJob } from "../../shared/ai-processor-v2.ts";
 export default async function (req: Request): Promise<Response> {
   const base44 = createClientFromRequest(req);
 
-  const settingsList = await base44.asServiceRole.entities.AutomationSettings.filter(
-    { enabled: true },
+  // automation_mode (per-creator) is the authoritative gate now — the old
+  // settings.enabled flag is no longer trusted. List all settings and rely on
+  // the reengagement_enabled + creator.automation_mode checks below.
+  const settingsList = await base44.asServiceRole.entities.AutomationSettings.list(
     "-created_date",
     50
   );
