@@ -1,25 +1,28 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
-import { Save } from "lucide-react";
+import { Save, Square, FileEdit, Play } from "lucide-react";
 
 const MODES = [
-  { id: "off", label: "Off", description: "No AI responses. Messages still appear." },
-  { id: "draft", label: "Draft", description: "AI generates drafts. You approve before sending." },
-  { id: "full_auto", label: "Full Auto", description: "AI replies automatically. No approval needed." },
+  { id: "off", label: "Stopped", icon: Square, description: "No AI responses. Fan messages still sync and appear in the Inbox." },
+  { id: "draft", label: "Draft", icon: FileEdit, description: "AI generates reply drafts for your approval before sending." },
+  { id: "full_auto", label: "Running", icon: Play, description: "AI replies automatically — no approval needed. Use with a reviewed persona." },
 ];
+
+const PPV_TIERS = [1000, 1500, 2500, 3500, 5000, 7000, 9000];
+const fmtTier = (c) => `$${(c / 100).toFixed(0)}`;
 
 export default function ModelAutomation({ creator, autoSettings, onSaved }) {
   const [mode, setMode] = React.useState(creator.automation_mode || "off");
   const [settings, setSettings] = React.useState({
     enabled: autoSettings?.enabled ?? false,
     approval_required: autoSettings?.approval_required ?? true,
-    quiet_hours_start: autoSettings?.quiet_hours_start || "23:00",
-    quiet_hours_end: autoSettings?.quiet_hours_end || "08:00",
     max_replies_per_hour: autoSettings?.max_replies_per_hour ?? 20,
     min_confidence: autoSettings?.min_confidence ?? 0.7,
     ppv_allowed: autoSettings?.ppv_allowed ?? false,
-    max_ppv_cents: autoSettings?.max_ppv_cents ?? 1000,
+    max_ppv_cents: autoSettings?.max_ppv_cents ?? 9000,
+    default_ppv_cents: autoSettings?.default_ppv_cents ?? 1000,
+    ppv_ladder_enabled: autoSettings?.ppv_ladder_enabled ?? [...PPV_TIERS],
   });
   const [saving, setSaving] = React.useState(false);
 
@@ -29,15 +32,25 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
       setSettings({
         enabled: autoSettings.enabled,
         approval_required: autoSettings.approval_required,
-        quiet_hours_start: autoSettings.quiet_hours_start || "23:00",
-        quiet_hours_end: autoSettings.quiet_hours_end || "08:00",
         max_replies_per_hour: autoSettings.max_replies_per_hour || 20,
         min_confidence: autoSettings.min_confidence || 0.7,
         ppv_allowed: autoSettings.ppv_allowed ?? false,
-        max_ppv_cents: autoSettings.max_ppv_cents || 1000,
+        max_ppv_cents: autoSettings.max_ppv_cents || 9000,
+        default_ppv_cents: autoSettings.default_ppv_cents || 1000,
+        ppv_ladder_enabled: autoSettings.ppv_ladder_enabled ?? [...PPV_TIERS],
       });
     }
   }, [creator, autoSettings]);
+
+  const toggleTier = (cents) => {
+    setSettings((s) => {
+      const has = (s.ppv_ladder_enabled || []).includes(cents);
+      let next = has ? (s.ppv_ladder_enabled || []).filter((c) => c !== cents) : [...(s.ppv_ladder_enabled || []), cents];
+      next.sort((a, b) => a - b);
+      if (next.length === 0) next = [1000]; // never empty — $10 is the floor
+      return { ...s, ppv_ladder_enabled: next };
+    });
+  };
 
   const handleSave = async () => {
     try {
@@ -63,39 +76,32 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
       <div>
         <label className="mb-3 block text-sm font-medium text-foreground">Automation Mode</label>
         <div className="grid grid-cols-3 gap-3">
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setMode(m.id)}
-              className={`rounded-lg border p-4 text-left transition-all ${
-                mode === m.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"
-              }`}
-            >
-              <p className="text-sm font-medium text-foreground">{m.label}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{m.description}</p>
-            </button>
-          ))}
+          {MODES.map((m) => {
+            const Icon = m.icon;
+            return (
+              <button
+                key={m.id}
+                onClick={() => setMode(m.id)}
+                className={`rounded-lg border p-4 text-left transition-all ${
+                  mode === m.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"
+                }`}
+              >
+                <div className="mb-1.5 flex items-center gap-2">
+                  <Icon className={`h-4 w-4 ${mode === m.id ? "text-primary" : "text-muted-foreground"}`} />
+                  <span className="text-sm font-medium text-foreground">{m.label}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">{m.description}</p>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Settings */}
       <div className="space-y-4 rounded-lg border border-border bg-card p-5">
         <ToggleRow label="Automation Enabled" value={settings.enabled} onChange={(v) => setSettings({ ...settings, enabled: v })} />
-        <ToggleRow label="Approval Required" value={settings.approval_required} onChange={(v) => setSettings({ ...settings, approval_required: v })} />
+        <ToggleRow label="Approval Required (Draft mode)" value={settings.approval_required} onChange={(v) => setSettings({ ...settings, approval_required: v })} />
         <ToggleRow label="PPV Allowed" value={settings.ppv_allowed} onChange={(v) => setSettings({ ...settings, ppv_allowed: v })} />
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Quiet Hours Start</label>
-            <input type="time" value={settings.quiet_hours_start} onChange={(e) => setSettings({ ...settings, quiet_hours_start: e.target.value })}
-              className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Quiet Hours End</label>
-            <input type="time" value={settings.quiet_hours_end} onChange={(e) => setSettings({ ...settings, quiet_hours_end: e.target.value })}
-              className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
-          </div>
-        </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -104,17 +110,50 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
               className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Min Confidence</label>
+            <label className="mb-1 block text-xs text-muted-foreground">Min Confidence (0–1)</label>
             <input type="number" step="0.05" min="0" max="1" value={settings.min_confidence} onChange={(e) => setSettings({ ...settings, min_confidence: parseFloat(e.target.value) || 0.7 })}
               className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
           </div>
         </div>
 
-        <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Max PPV (cents)</label>
-          <input type="number" value={settings.max_ppv_cents} onChange={(e) => setSettings({ ...settings, max_ppv_cents: parseInt(e.target.value) || 1000 })}
-            className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
-        </div>
+        {settings.ppv_allowed && (
+          <div className="rounded-md border border-border p-3">
+            <p className="mb-1 text-xs font-medium text-foreground">PPV Price Ladder</p>
+            <p className="mb-2.5 text-xs text-muted-foreground">The AI may only offer these prices. $10 is the hard minimum — lower tiers cannot be disabled.</p>
+            <div className="flex flex-wrap gap-1.5">
+              {PPV_TIERS.map((c) => {
+                const on = (settings.ppv_ladder_enabled || []).includes(c);
+                const locked = c === 1000;
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    disabled={locked}
+                    onClick={() => toggleTier(c)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                      on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-accent"
+                    } ${locked ? "opacity-60 cursor-not-allowed" : ""}`}
+                    title={locked ? "$10 minimum is always enabled" : ""}
+                  >
+                    {fmtTier(c)}{locked ? " ★" : ""}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Default PPV (cents)</label>
+                <input type="number" min={1000} step={500} value={settings.default_ppv_cents} onChange={(e) => setSettings({ ...settings, default_ppv_cents: Math.max(1000, parseInt(e.target.value) || 1000) })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Max PPV (cents)</label>
+                <input type="number" min={1000} step={500} value={settings.max_ppv_cents} onChange={(e) => setSettings({ ...settings, max_ppv_cents: Math.max(1000, parseInt(e.target.value) || 9000) })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <button onClick={handleSave} disabled={saving}

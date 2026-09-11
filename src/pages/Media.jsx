@@ -166,7 +166,9 @@ export default function Media() {
 
 function MediaCard({ item }) {
   const isVideo = item.type === "video" || item.mediaType === "video";
-  const thumb = item.thumbnailUrl || item.thumbnail_url || item.previewUrl || item.url;
+  const thumb = item.thumbnailUrl || item.thumbnail_url || item.previewUrl || item.url
+    || item.variants?.thumbnail?.url || item.media?.url || item.media?.variants?.thumbnail?.url
+    || item.preview?.url || item.cover?.url || item.thumbnails?.[0]?.url;
   const isPpv = item.pricing?.USD?.price || item.priceCents || item.isLocked;
 
   return (

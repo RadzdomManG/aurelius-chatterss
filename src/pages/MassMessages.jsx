@@ -1,6 +1,6 @@
 import React from "react";
 import { toast } from "sonner";
-import { Megaphone, Trash2, Eye, DollarSign, Users as UsersIcon } from "lucide-react";
+import { Megaphone, Trash2, Eye, DollarSign, Users as UsersIcon, Pencil } from "lucide-react";
 import { fanvueCall, useConnection, money, fmtDateShort } from "@/lib/fanvue-gateway";
 import ScopeGate from "@/components/shared/ScopeGate";
 import EmptyState from "@/components/shared/EmptyState";
@@ -20,6 +20,7 @@ export default function MassMessages() {
   const [messages, setMessages] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [sending, setSending] = React.useState(false);
+  const [editing, setEditing] = React.useState(null);
 
   const load = React.useCallback(async () => {
     if (!connection) return;
@@ -53,14 +54,33 @@ export default function MassMessages() {
     }
   };
 
-  const handleDelete = async (uuid) => {
-    if (!window.confirm("Delete this mass message? This cannot be undone.")) return;
+  const handleUpdate = async (payload) => {
+    if (!editing) return;
+    if (!window.confirm("Update this scheduled mass message?")) return;
     try {
-      await fanvueCall("deleteMassMessage", { params: { messageUuid: uuid }, confirm: true });
-      setMessages((prev) => prev.filter((m) => m.uuid !== uuid));
-      toast.success("Mass message deleted");
+      setSending(true);
+      await fanvueCall("updateMassMessage", { params: { messageUuid: editing.uuid }, data: payload, confirm: true });
+      toast.success("Mass message updated");
+      setEditing(null);
+      await load();
     } catch (e) {
-      toast.error(e?.error || "Failed to delete");
+      toast.error(e?.error || "Failed to update mass message");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleDelete = async (m) => {
+    const isSent = m.status === "SENT";
+    const action = isSent ? "unsend" : "cancel";
+    if (!window.confirm(`Are you sure you want to ${action} this mass message? This cannot be undone.`)) return;
+    try {
+      await fanvueCall("deleteMassMessage", { params: { messageUuid: m.uuid }, confirm: true });
+      setMessages((prev) => prev.filter((x) => x.uuid !== m.uuid));
+      if (editing?.uuid === m.uuid) setEditing(null);
+      toast.success(isSent ? "Mass message unsent" : "Mass message cancelled");
+    } catch (e) {
+      toast.error(e?.error || `Failed to ${action}`);
     }
   };
 
@@ -81,7 +101,11 @@ export default function MassMessages() {
         <p className="mb-6 text-sm text-muted-foreground">Broadcast PPV and free messages to fan segments</p>
 
         <div className="mb-8">
-          <MassMessageComposer onSend={handleSend} sending={sending} />
+          {editing ? (
+            <MassMessageComposer editMode initial={editing} onUpdate={handleUpdate} sending={sending} onCancelEdit={() => setEditing(null)} />
+          ) : (
+            <MassMessageComposer onSend={handleSend} sending={sending} />
+          )}
         </div>
 
         <h2 className="mb-3 text-sm font-medium text-foreground">Sent & Scheduled</h2>
@@ -92,7 +116,7 @@ export default function MassMessages() {
         ) : (
           <div className="space-y-2">
             {messages.map((m) => (
-              <div key={m.uuid} className="rounded-lg border border-border bg-card p-4">
+              <div key={m.uuid} className={`rounded-lg border bg-card p-4 ${editing?.uuid === m.uuid ? "border-primary ring-1 ring-primary/30" : "border-border"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -108,13 +132,24 @@ export default function MassMessages() {
                       <span>{m.purchaseCount ?? 0} purchases</span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDelete(m.uuid)}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
-                    title="Delete"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {m.status === "SCHEDULED" && (
+                      <button
+                        onClick={() => setEditing(m)}
+                        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-primary"
+                        title="Edit scheduled message"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDelete(m)}
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
+                      title={m.status === "SENT" ? "Unsend" : "Cancel"}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

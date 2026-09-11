@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Bot, Clock, AlertTriangle, Send, ListChecks, RotateCcw, MessageSquare, Zap } from "lucide-react";
 import MassMessaging from "@/components/automation/MassMessaging";
 import RulesManager from "@/components/automation/RulesManager";
+import AutomationModeHeader from "@/components/automation/AutomationModeHeader";
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
 
@@ -60,6 +61,8 @@ export default function Automation() {
       <div className="mx-auto max-w-4xl px-6 py-8">
         <h1 className="mb-1 font-heading text-3xl text-foreground">Automation</h1>
         <p className="mb-6 text-sm text-muted-foreground">AI job queue, failed jobs, and scheduled actions</p>
+
+        <AutomationModeHeader />
 
         {/* Stats */}
         <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-5">

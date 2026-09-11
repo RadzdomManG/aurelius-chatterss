@@ -1,5 +1,5 @@
 import React from "react";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, Pencil } from "lucide-react";
 
 export const SMART_LISTS = [
   { id: "subscribers", label: "Subscribers" },
@@ -14,12 +14,30 @@ export const SMART_LISTS = [
 
 const MIN_PPV_CENTS = 300;
 
-export default function MassMessageComposer({ onSend, sending }) {
+function toLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export default function MassMessageComposer({ onSend, onUpdate, sending, editMode = false, initial = null, onCancelEdit }) {
   const [text, setText] = React.useState("");
   const [priceCents, setPriceCents] = React.useState(0);
   const [include, setInclude] = React.useState(["subscribers"]);
   const [exclude, setExclude] = React.useState([]);
   const [scheduledAt, setScheduledAt] = React.useState("");
+
+  React.useEffect(() => {
+    if (editMode && initial) {
+      setText(initial.text || "");
+      setPriceCents(initial.price || 0);
+      setInclude(initial.includedLists?.smartListIds?.length ? initial.includedLists.smartListIds : ["subscribers"]);
+      setExclude(initial.excludedLists?.smartListIds || []);
+      setScheduledAt(toLocalInput(initial.scheduledAt));
+    }
+  }, [editMode, initial]);
 
   const toggle = (list, setList, id) => {
     setList((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -29,23 +47,35 @@ export default function MassMessageComposer({ onSend, sending }) {
 
   const submit = () => {
     if (!valid) return;
-    onSend({
+    const payload = {
       text: text.trim(),
       price: priceCents > 0 ? priceCents : null,
       includedLists: { smartListIds: include, customListUuids: [] },
       excludedLists: { smartListIds: exclude, customListUuids: [] },
       scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
-    });
-    setText("");
-    setPriceCents(0);
-    setInclude(["subscribers"]);
-    setExclude([]);
-    setScheduledAt("");
+    };
+    if (editMode && onUpdate) {
+      onUpdate(payload);
+    } else if (onSend) {
+      onSend(payload);
+      setText("");
+      setPriceCents(0);
+      setInclude(["subscribers"]);
+      setExclude([]);
+      setScheduledAt("");
+    }
   };
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="mb-3 text-sm font-medium text-foreground">New Mass Message</h3>
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-foreground">
+          {editMode ? <span className="inline-flex items-center gap-2"><Pencil className="h-4 w-4 text-primary" /> Edit Scheduled Mass Message</span> : "New Mass Message"}
+        </h3>
+        {editMode && onCancelEdit && (
+          <button onClick={onCancelEdit} className="text-xs text-muted-foreground hover:text-foreground">Cancel edit</button>
+        )}
+      </div>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -69,7 +99,7 @@ export default function MassMessageComposer({ onSend, sending }) {
           <span className="text-xs text-destructive">Minimum $3.00 (300 cents)</span>
         )}
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          Schedule
+          {editMode ? "Reschedule" : "Schedule"}
           <input
             type="datetime-local"
             value={scheduledAt}
@@ -123,8 +153,8 @@ export default function MassMessageComposer({ onSend, sending }) {
         disabled={!valid || sending}
         className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 hover:bg-primary/90"
       >
-        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-        {scheduledAt ? "Schedule" : "Send to all"}
+        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : editMode ? <Pencil className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+        {editMode ? "Update Message" : scheduledAt ? "Schedule" : "Send to all"}
       </button>
     </div>
   );
