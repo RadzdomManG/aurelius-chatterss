@@ -282,9 +282,9 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     base44.asServiceRole.entities.CreatorProfile.filter({ id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.PersonaProfile.filter({ creator_profile_id: creatorProfileId, active: true }, "-updated_date", 1),
     base44.asServiceRole.entities.Fan.filter({ id: conversation.fan_id }, "-created_date", 1),
-    base44.asServiceRole.entities.FanMemory.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "-created_date", 30),
+    base44.asServiceRole.entities.FanMemory.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "-created_date", 12),
     // Fetch the newest window first; it is normalized to chronological order below.
-    base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "-created_date", 30),
+    base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "-created_date", 15),
     // Resolve the exact message that created this job. This avoids relying on
     // backend sort behavior when deciding which fan message to answer.
     triggerMessageUuid
@@ -460,9 +460,6 @@ ${persona.instructions}
 - NEVER suggest or agree to meetups, real-life contact, or moving off Fanvue. Follow Fanvue rules.
 - If the fan is or seems to be a student / school-related, stay friendly and non-sexual — no sexual content or PPV.
 
-=== CONVERSATION CONTINUITY ===
-${continuityContext}
-
 === CONVERSATION INTELLIGENCE ===
 Before writing your reply, analyze the conversation:
 1. What is the fan's current message about? (current topic)
@@ -513,7 +510,6 @@ Building heat:
 
 === RESPONSE STRUCTURE ===
 Pick from as natural: direct reaction, callback to something he said (use memory), persona self-expression, topic continuation, a fresh question only when it flows, escalation/PPV only when heat is real. Do NOT force every element. Do NOT always end with a question.
-${tooManyQuestions ? "\nIMPORTANT: You have asked a question in your last several replies. This time, do NOT ask a question — make a statement, share something, or react instead." : ""}
 
 === MEMORY USAGE ===
 - Use known facts about the fan naturally ("How's Tokyo treating you?" if you know they're from Japan).
@@ -522,24 +518,20 @@ ${tooManyQuestions ? "\nIMPORTANT: You have asked a question in your last severa
 
 === EMOJI RULES ===
 - Follow your persona's emoji style.
-- Your recent emoji usage: ${recentEmojiStr}
 - Do NOT repeat the same emoji you've used in your last few replies. Vary your emoji or use none when natural.
 - Emoji examples in your persona describe your STYLE, not a requirement to use that specific emoji every time.
 
 === ANTI-REPETITION ===
-Your recent replies to this fan:
-${recentCreatorText || "(no recent replies)"}
-Do NOT reuse the same openings, phrases, activities, questions, or structures. Every reply must be fresh and varied.
-BANNED PHRASES (these appeared in recent replies — do NOT reuse any): ${bannedStr}
+Do NOT reuse the same openings, phrases, activities, questions, or structures. Every reply must be fresh and varied. Specific recent replies and banned phrases are provided in the message below — do not reuse any banned phrase.
 
 === SALES (PERSONA-AUTHORITATIVE) ===
-${ppvAllowed ? `- Offer PPV ONLY when the fan is clearly turned on / horny (heat level: suggestive or higher). Tease and build heat first — NEVER offer cold or early. Keep the soft GFE energy throughout.
-- LADDER PRICING: start at the low end ($10–12) for newer fans and climb toward $400 as rapport, heat, and purchase history grow. Price must be one of: ${ladderStr}. Match the rung to the fan's heat + relationship level.
+Offer PPV ONLY when the fan is clearly turned on / horny (heat level: suggestive or higher). Tease and build heat first — NEVER offer cold or early. Keep the soft GFE energy throughout.
+- LADDER PRICING: start at the low end ($10–12) for newer fans and climb toward $400 as rapport, heat, and purchase history grow. Match the rung to the fan's heat + relationship level.
 - 5 pictures are attached to every PPV automatically (the system handles it) — do NOT mention picture counts in your message; just tease the content naturally and privately.
 - Do NOT send PPV just because N messages have passed. Only when the fan's heat is real.
 - PPV should feel like sharing something private, never a sales pitch.
 - NEVER suggest meetups, real-life contact, or moving off Fanvue. Refuse or deflect any request for meets, numbers, or other platforms.
-- If the fan appears to be a student or school-related, do NOT escalate to sexual content or PPV — keep it friendly and non-sexual.` : `- Do not offer PPV content right now (frequency limit or not enabled).`}
+- If the fan appears to be a student or school-related, do NOT escalate to sexual content or PPV — keep it friendly and non-sexual.
 
 Respond ONLY with a JSON object:
 {
@@ -561,6 +553,21 @@ Subscription status: ${fan?.subscription_status || "unknown"}
 KNOWN FACTS ABOUT THIS FAN (memory):
 ${memoryText || "No known facts yet — this may be a new fan."}
 
+CONVERSATION CONTINUITY:
+${continuityContext}
+
+YOUR RECENT EMOJI USAGE (do NOT repeat these — vary or use none):
+${recentEmojiStr}
+
+YOUR RECENT REPLIES TO THIS FAN:
+${recentCreatorText || "(no recent replies)"}
+
+BANNED PHRASES (appeared in recent replies — do NOT reuse any): ${bannedStr}
+
+SALES CONTEXT:
+${ppvAllowed ? `- PPV is ALLOWED right now. Offer it ONLY when the fan is clearly turned on.\n- Valid price rungs: ${ladderStr}\n- Start low ($10–12) for newer fans, climb toward $400 as rapport/heat grows. Pick the rung matching heat + relationship.` : `- PPV is NOT allowed right now (frequency limit or not enabled). Do not offer PPV.`}
+${tooManyQuestions ? "\nIMPORTANT: You have asked a question in your last several replies. This time, do NOT ask a question — make a statement, share something, or react instead." : ""}
+
 RECENT CONVERSATION (oldest to newest):
 ${conversationContext || "No prior messages."}
 
@@ -581,6 +588,19 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         prompt: `${systemPrompt}\n\n${userPrompt}`,
         response_json_schema: AI_JSON_SCHEMA,
       });
+    }
+
+    // === PPV ESCALATION: if the cheap mini model offered a PPV, regenerate once
+    // with full grok-3 for premium sales copy (the moment that converts). ===
+    if (ppvAllowed && aiResult?.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
+      try {
+        const escalated = await callGrok(systemPrompt, userPrompt, AI_JSON_SCHEMA, "grok-3-latest");
+        if (escalated && (Array.isArray(escalated.replies) || typeof escalated.reply === "string")) {
+          aiResult = escalated;
+        }
+      } catch (escErr) {
+        console.error("[ai] PPV escalation to grok-3 failed, keeping mini result:", (escErr as any).message);
+      }
     }
 
     // Normalize to an array of single-line bubbles (no line breaks inside a bubble)
@@ -641,26 +661,22 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       ppvCents = validatePpvCents(aiResult.suggested_ppv_cents, settings);
     }
 
-    // === ANTI-REPETITION + EMOJI VALIDATION (regenerate once) ===
+    // === ANTI-REPETITION (text-only; regenerate once on the cheap mini model) ===
     const isRep = isRepetitive(replyText, recentCreatorMsgs);
-    const isEmojiRep = hasRepetitiveEmoji(replyText, recentEmojis);
-    if (isRep || isEmojiRep) {
+    if (isRep) {
       await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "anti_repetition" });
       try {
-        const fixReason = isRep ? "REPETITIVE_TEXT_PATTERN" : "REPETITIVE_EMOJI_PATTERN";
-        const antiPrompt = userPrompt + `\n\nIMPORTANT: Your previous reply was flagged as ${fixReason}. Write a completely fresh response with different wording, a different opening, and ${isEmojiRep ? "different emoji (or no emoji)" : "varied emoji"}. Do not repeat activities, stories, or questions you have used before.\n\nBANNED PHRASES (do NOT reuse any of these — they appeared in recent replies): ${bannedStr}`;
+        const antiPrompt = userPrompt + `\n\nIMPORTANT: Your previous reply was flagged as REPETITIVE_TEXT_PATTERN. Write a completely fresh response with different wording, a different opening, and varied emoji. Do not repeat activities, stories, or questions you have used before.\n\nBANNED PHRASES (do NOT reuse any of these — they appeared in recent replies): ${bannedStr}`;
         const regen = await callGrok(systemPrompt, antiPrompt, AI_JSON_SCHEMA);
         const regenReplies = Array.isArray(regen?.replies)
           ? regen.replies
           : (typeof regen?.reply === "string" ? [regen.reply] : []);
         const regenText = regenReplies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ");
-        if (regenText) {
-          if (!isRepetitive(regenText, recentCreatorMsgs) && !hasRepetitiveEmoji(regenText, recentEmojis)) {
-            aiResult = regen;
-            replies = regenReplies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean);
-            if (ppvAllowed && aiResult.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
-              ppvCents = validatePpvCents(aiResult.suggested_ppv_cents, settings);
-            }
+        if (regenText && !isRepetitive(regenText, recentCreatorMsgs)) {
+          aiResult = regen;
+          replies = regenReplies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+          if (ppvAllowed && aiResult.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
+            ppvCents = validatePpvCents(aiResult.suggested_ppv_cents, settings);
           }
         }
       } catch (e) {

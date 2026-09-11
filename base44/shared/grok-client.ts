@@ -7,7 +7,9 @@ const XAI_API_URL = "https://api.x.ai/v1/chat/completions";
  * Returns parsed JSON matching the requested schema.
  * Falls back gracefully on error.
  */
-export async function callGrok(systemPrompt, userPrompt, jsonSchema) {
+const DEFAULT_MODEL = "grok-3-mini";
+
+export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = DEFAULT_MODEL) {
   const apiKey = secrets.get("XAI_API_KEY");
   if (!apiKey) throw new Error("XAI_API_KEY secret is not set");
 
@@ -18,13 +20,13 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema) {
     : "";
 
   const body = {
-    model: "grok-3-latest",
+    model,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt + schemaHint },
     ],
     temperature: 0.7,
-    max_tokens: 600,
+    max_tokens: 250,
     response_format: { type: "json_object" },
   };
 
