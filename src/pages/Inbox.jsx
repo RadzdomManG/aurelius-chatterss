@@ -70,14 +70,27 @@ export default function Inbox() {
   const loadInitialData = async () => {
     try {
       setLoadingConvos(true);
-      const [convos, fanList, creators, connections, personas, settingsList] = await Promise.all([
+      // Use allSettled so one failed fetch doesn't blank the whole inbox.
+      const settled = await Promise.allSettled([
         base44.entities.Conversation.list("-last_message_at", 100),
-        base44.entities.Fan.list("-created_date", 1000),
+        base44.entities.Fan.list("-created_date", 500),
         base44.entities.CreatorProfile.list("-created_date", 10),
         base44.entities.FanvueConnection.list("-created_date", 10),
         base44.entities.PersonaProfile.list("-created_date", 20),
         base44.entities.AutomationSettings.list("-created_date", 20),
       ]);
+
+      const convos = settled[0].status === "fulfilled" ? settled[0].value : [];
+      const fanList = settled[1].status === "fulfilled" ? settled[1].value : [];
+      const creators = settled[2].status === "fulfilled" ? settled[2].value : [];
+      const connections = settled[3].status === "fulfilled" ? settled[3].value : [];
+      const personas = settled[4].status === "fulfilled" ? settled[4].value : [];
+      const settingsList = settled[5].status === "fulfilled" ? settled[5].value : [];
+
+      // Log any failures for debugging without blocking the UI
+      settled.forEach((r, i) => {
+        if (r.status === "rejected") console.warn(`Inbox fetch ${i} failed:`, r.reason);
+      });
 
       const fanMap = {};
       fanList.forEach((f) => { fanMap[f.id] = f; });
@@ -91,6 +104,10 @@ export default function Inbox() {
       setAutomationSettings(settingsList.find((s) => s.creator_profile_id === activeCreator?.id) || null);
 
       if (convos.length > 0) setSelectedId(convos[0].id);
+
+      if (settled[0].status === "rejected") {
+        toast.error("Failed to load conversations — retrying...");
+      }
     } catch (err) {
       console.error("Failed to load inbox:", err);
       toast.error("Failed to load conversations");
