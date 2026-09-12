@@ -51,6 +51,9 @@ export default function Inbox() {
   // Tracking the full set lets realtime + polling surface every message
   // in the thread regardless of which record it was stored against.
   const activeConvIdsRef = React.useRef([]);
+  // Request token so a stale (older) loadMessages can never overwrite the
+  // current view after the operator switches conversations.
+  const loadTokenRef = React.useRef(0);
 
   // Keep a ref of the fans map so async callbacks (realtime, ensureFan) can
   // check membership without stale-closure issues.
@@ -258,6 +261,11 @@ export default function Inbox() {
   // Load messages + memories + persona when conversation selected
   React.useEffect(() => {
     if (!selectedId) return;
+    // Clear immediately so the realtime subscription + 3s poll can't merge the
+    // previous conversation's messages into the new thread while loadMessages
+    // is in flight.
+    activeConvIdsRef.current = [];
+    setMessages([]);
     loadMessages(selectedId);
     loadMemories(selectedId);
   }, [selectedId]);
@@ -272,6 +280,7 @@ export default function Inbox() {
   }, [selectedId, conversations]);
 
   const loadMessages = async (convId) => {
+    const myToken = ++loadTokenRef.current;
     try {
       setLoadingMessages(true);
       const conv = conversations.find((c) => c.id === convId);
@@ -281,22 +290,28 @@ export default function Inbox() {
       // same fan (ingest upserts by fan_id but old sync-created duplicates
       // persist), which is why the inbox showed a new message badge while the
       // thread loaded an old conversation. Merging the full set fixes this.
+      // Sort newest-first so the active record (where new messages land) is
+      // always included even when many duplicate records exist.
       let convIds = [convId];
       if (conv?.fan_id && conv?.creator_profile_id) {
         try {
           const allConvos = await base44.entities.Conversation.filter(
             { creator_profile_id: conv.creator_profile_id, fan_id: conv.fan_id },
-            "created_date",
-            50
+            "-created_date",
+            100
           );
           if (allConvos && allConvos.length) convIds = allConvos.map((c) => c.id);
         } catch (e) {}
       }
+      // Bail if the operator switched away from this conversation during the
+      // awaits — a stale fetch must never overwrite the current view.
+      if (myToken !== loadTokenRef.current) return;
       activeConvIdsRef.current = convIds;
 
       const msgResults = await Promise.allSettled(
         convIds.map((cid) => base44.entities.Message.filter({ conversation_id: cid }, "created_date", 100))
       );
+      if (myToken !== loadTokenRef.current) return;
       const merged = new Map();
       msgResults.forEach((r) => {
         if (r.status === "fulfilled" && Array.isArray(r.value)) {
@@ -317,6 +332,7 @@ export default function Inbox() {
       const pendingResults = await Promise.allSettled(
         convIds.map((cid) => base44.entities.AIJob.filter({ conversation_id: cid, status: "needs_approval" }, "-created_date", 1))
       );
+      if (myToken !== loadTokenRef.current) return;
       let pendingJob = null;
       pendingResults.forEach((r) => { if (r.status === "fulfilled" && r.value[0] && !pendingJob) pendingJob = r.value[0]; });
       if (pendingJob?.reply_text) {
