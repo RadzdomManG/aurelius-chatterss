@@ -124,8 +124,18 @@ export default function Inbox() {
       unsubMessages = base44.entities.Message.subscribe((event) => {
         if (event.type === "create" && event.data.conversation_id === selectedId) {
           setMessages((prev) => {
-            if (prev.some((m) => m.id === event.data.id)) return prev;
-            return [...prev, event.data];
+            const list = Array.isArray(prev) ? prev : [];
+            // Dedup by id AND external_uuid so a webhook-created record (real
+            // uuid) can't double up with an optimistic local record (null uuid)
+            // — the root cause of phantom duplicate bubbles.
+            if (list.some((m) => m.id === event.data.id)) return prev;
+            if (event.data.external_uuid && list.some((m) => m.external_uuid === event.data.external_uuid)) {
+              // Patch the existing optimistic record with the real id/uuid.
+              return list.map((m) =>
+                m.external_uuid === event.data.external_uuid ? { ...m, ...event.data } : m
+              );
+            }
+            return [...list, event.data];
           });
         }
       });
@@ -181,15 +191,28 @@ export default function Inbox() {
           );
         });
 
-        // Merge any new messages into the open thread (dedup by id)
-        if (recentMsgs && recentMsgs.length > 0) {
+        // Merge any new messages into the open thread (dedup by id AND
+        // external_uuid — matches the realtime path; a Fanvue-uuid record
+        // patches an optimistic local placeholder instead of stacking).
+        if (Array.isArray(recentMsgs) && recentMsgs.length > 0) {
           setMessages((prev) => {
-            const map = new Map(prev.map((m) => [m.id, m]));
-            let added = false;
+            const list = Array.isArray(prev) ? prev : [];
+            const map = new Map(list.map((m) => [m.id, m]));
+            const uuidIndex = new Map(list.filter((m) => m.external_uuid).map((m) => [m.external_uuid, m.id]));
+            let changed = false;
             recentMsgs.forEach((m) => {
-              if (!map.has(m.id)) { map.set(m.id, m); added = true; }
+              const existingByUuid = m.external_uuid ? uuidIndex.get(m.external_uuid) : null;
+              if (existingByUuid) {
+                const cur = map.get(existingByUuid);
+                if (cur && JSON.stringify(cur) !== JSON.stringify(m)) {
+                  map.set(existingByUuid, { ...cur, ...m, id: existingByUuid });
+                  changed = true;
+                }
+                return;
+              }
+              if (!map.has(m.id)) { map.set(m.id, m); changed = true; }
             });
-            if (!added) return prev;
+            if (!changed) return prev;
             return Array.from(map.values()).sort(
               (a, b) => new Date(a.created_date) - new Date(b.created_date)
             );
@@ -229,7 +252,7 @@ export default function Inbox() {
     try {
       setLoadingMessages(true);
       const msgs = await base44.entities.Message.filter({ conversation_id: convId }, "created_date", 100);
-      setMessages(msgs);
+      setMessages(Array.isArray(msgs) ? msgs : []);
 
       // Load pending AI draft for review (from auto-processing)
       const pendingJobs = await base44.entities.AIJob.filter(
@@ -434,6 +457,54 @@ export default function Inbox() {
     // delivers a PPV, not a free text bubble.
     const draftPpvCents = draft.ppvCents || null;
     const draftMediaUuids = draft.mediaUuids || null;
+
+    // PPV cooldown gate (manual approve path): mirror the AI processor's
+    // send-time re-check so approving a PPV draft shortly after an auto PPV
+    // never sends two offers back-to-back. Block the PPV but still send the
+    // conversational text so the chat stays alive.
+    if (draftPpvCents && draftPpvCents > 0 && conv?.last_ppv_offer_at) {
+      const minMinutes = Math.max(automationSettings?.ppv_min_minutes_between_offers || 10, 10);
+      const minutesSince = (Date.now() - new Date(conv.last_ppv_offer_at).getTime()) / 60000;
+      if (minutesSince < minMinutes) {
+        toast.error(`PPV on cooldown — last offer ${minutesSince.toFixed(0)} min ago (min ${minMinutes}). Sending text only.`);
+        // Send as a free conversational message instead.
+        try {
+          setSending(true);
+          const msg = await base44.entities.Message.create({
+            creator_profile_id: conv.creator_profile_id,
+            conversation_id: selectedId,
+            sender_type: "creator",
+            body: reply,
+            media: null,
+            ppv_cents: null,
+            source: "ai",
+            send_status: "pending",
+          });
+          setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+          const nowIso = new Date().toISOString();
+          await base44.entities.Conversation.update(selectedId, {
+            last_message_at: nowIso,
+            last_message_preview: reply,
+            last_sender_type: "creator",
+          });
+          setConversations((prev) => prev.map((c) => c.id === selectedId ? { ...c, last_message_at: nowIso, last_message_preview: reply, last_sender_type: "creator" } : c));
+          if (jobId) await base44.entities.AIJob.update(jobId, { status: "completed" }).catch(() => {});
+          try {
+            await base44.functions.invoke("send-message", { conversationId: selectedId, body: reply, ppvCents: null, mediaUuids: null, mediaPreviewUuid: null, messageId: msg.id });
+            setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, send_status: "sent" } : m)));
+          } catch (fnErr) {
+            await base44.entities.Message.update(msg.id, { send_status: "failed" }).catch(() => {});
+            setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, send_status: "failed" } : m)));
+          }
+        } finally {
+          setSending(false);
+        }
+        setDraft(null);
+        setComposerValue("");
+        return;
+      }
+    }
+
     setDraft(null);
     setComposerValue("");
 

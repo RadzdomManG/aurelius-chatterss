@@ -20,6 +20,14 @@
     "avatar_url": {
       "type": "string"
     },
+    "nickname": {
+      "type": "string",
+      "description": "Operator-set nickname shown in the inbox, distinct from the Fanvue display_name"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Operator's free-text notes about this fan, shown in the Inspector"
+    },
     "subscription_status": {
       "type": "string"
     },

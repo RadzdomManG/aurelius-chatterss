@@ -37,8 +37,20 @@ export default function ChatThread({
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [triggeringAI, setTriggeringAI] = React.useState(false);
 
+  // Scroll ONLY when a genuinely new message arrives or the conversation
+  // switches — NOT on every array-reference change (the 3s polling fallback
+  // re-sorts and would otherwise fight the operator's scroll position).
+  const msgCount = Array.isArray(messages) ? messages.length : 0;
+  const lastMsgId = Array.isArray(messages) && messages.length ? messages[messages.length - 1].id : null;
+  const convId = conversation?.id;
+  React.useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [msgCount, lastMsgId, convId]);
+
   // Check if last message is from fan with no creator/AI reply after it
-  const lastMsg = messages[messages.length - 1];
+  const lastMsg = Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null;
   const needsAIReply = lastMsg?.sender_type === "fan" && !generating && !triggeringAI;
 
   const handleTriggerAI = async () => {
@@ -59,12 +71,6 @@ export default function ChatThread({
       setTriggeringAI(false);
     }
   };
-
-  React.useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
 
   const currentMode = conversation?.automation_mode_override || creator?.automation_mode || "off";
 
@@ -174,7 +180,7 @@ export default function ChatThread({
               </div>
             ))}
           </div>
-        ) : messages.length === 0 ? (
+        ) : !Array.isArray(messages) || messages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground">No messages yet</p>
           </div>
