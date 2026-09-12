@@ -96,10 +96,20 @@ export default async function (req: Request): Promise<Response> {
   if (action === "resume") {
     const config = await getAppConfig(base44);
     const snapshot = (config?.paused_modes || {}) as Record<string, string>;
+    // The snapshot was captured at pause time and can go stale if the operator
+    // manually set a creator to draft/full_auto while the system was paused.
+    // Load live records once and prefer the MORE active mode so Resume All
+    // never downgrades a creator the operator intentionally left running.
+    const liveCreators = await base44.asServiceRole.entities.CreatorProfile.list("-created_date", 200);
+    const liveMode = new Map<string, string>(liveCreators.map((c: any) => [c.id, c.automation_mode || "off"]));
     let restored = 0;
+    let kept = 0;
     for (const [creatorId, mode] of Object.entries(snapshot)) {
+      const live = liveMode.get(creatorId);
+      const final = live === "draft" || live === "full_auto" ? live : mode;
+      if (live === "draft" || live === "full_auto") kept++;
       try {
-        await base44.asServiceRole.entities.CreatorProfile.update(creatorId, { automation_mode: mode });
+        await base44.asServiceRole.entities.CreatorProfile.update(creatorId, { automation_mode: final });
         restored++;
       } catch (e) {}
     }
@@ -107,10 +117,10 @@ export default async function (req: Request): Promise<Response> {
     await base44.asServiceRole.entities.ActivityLog.create({
       event_type: "system.resumed",
       status: "success",
-      message: `Global pause lifted — restored ${restored} creator(s) to prior automation modes`,
-      metadata: { restored },
+      message: `Global pause lifted — restored ${restored} creator(s) (${kept} kept live mode)`,
+      metadata: { restored, kept },
     });
-    return Response.json({ success: true, paused: false, restored });
+    return Response.json({ success: true, paused: false, restored, kept });
   }
 
   return Response.json({ error: "Unknown action" }, { status: 400 });
