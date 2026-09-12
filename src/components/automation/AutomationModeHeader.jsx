@@ -59,6 +59,18 @@ export default function AutomationModeHeader() {
     if (!selectedCreator) return;
     setSaving(true);
     try {
+      // If the whole system is globally paused, clicking Running/Draft must
+      // clear that pause first — otherwise the mode is silently overridden
+      // and the bot stays "paused" with no reply ever going out.
+      if (paused && (mode === "draft" || mode === "full_auto")) {
+        try {
+          const res = await base44.functions.invoke("toggle-pause", { action: "resume" });
+          setPaused(false);
+          toast.success(`Resumed all — restored ${res?.restored || 0} creator(s)`);
+        } catch (e) {
+          toast.error("Failed to resume system");
+        }
+      }
       await base44.entities.CreatorProfile.update(selectedCreator.id, { automation_mode: mode });
       await reloadCreators();
       toast.success(`${selectedCreator.display_name}: ${MODES.find((m) => m.id === mode).label}`);
@@ -80,6 +92,17 @@ export default function AutomationModeHeader() {
     setSaving(true);
     try {
       if (currentMode === "off") {
+        // Resuming this creator. If the whole system is globally paused,
+        // clear that first so the bot actually runs.
+        if (paused) {
+          try {
+            const res = await base44.functions.invoke("toggle-pause", { action: "resume" });
+            setPaused(false);
+            toast.success(`Resumed all — restored ${res?.restored || 0} creator(s)`);
+          } catch (e) {
+            toast.error("Failed to resume system");
+          }
+        }
         const restoreMode = selectedCreator.prior_automation_mode === "draft" || selectedCreator.prior_automation_mode === "full_auto"
           ? selectedCreator.prior_automation_mode
           : "full_auto";
@@ -174,8 +197,8 @@ export default function AutomationModeHeader() {
                 <button
                   key={m.id}
                   onClick={() => handleMode(m.id)}
-                  disabled={saving || paused || !selectedCreator}
-                  title={paused ? "System is paused — Resume All to change mode" : !selectedCreator ? "No creator selected" : undefined}
+                  disabled={saving || !selectedCreator}
+                  title={!selectedCreator ? "No creator selected" : paused && (m.id === "draft" || m.id === "full_auto") ? "Resume the system and set to " + m.label : undefined}
                   className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 ${
                     active ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
                   }`}
@@ -187,8 +210,8 @@ export default function AutomationModeHeader() {
             {/* Per-creator quick pause/resume */}
             <button
               onClick={handleCreatorPauseResume}
-              disabled={saving || paused || !selectedCreator}
-              title={paused ? "System is paused — Resume All first" : current === "off" ? `Resume bot for ${selectedCreator?.display_name}` : `Pause bot for ${selectedCreator?.display_name}`}
+              disabled={saving || !selectedCreator}
+              title={!selectedCreator ? "No creator selected" : current === "off" ? `Resume bot for ${selectedCreator?.display_name}${paused ? " (will resume the system)" : ""}` : `Pause bot for ${selectedCreator?.display_name}`}
               className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 ${
                 current === "off"
                   ? "border-success/50 text-success hover:bg-success/10"

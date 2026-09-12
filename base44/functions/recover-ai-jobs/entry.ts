@@ -25,7 +25,7 @@ export default async function (req: Request): Promise<Response> {
     return Response.json({ success: true, paused: true, skipped: true });
   }
 
-  let recovered = 0, failed = 0, pendingRecovered = 0, duplicatesCancelled = 0, needsApprovalConverted = 0, msgDeduped = 0;
+  let recovered = 0, failed = 0, pendingRecovered = 0, duplicatesCancelled = 0, needsApprovalConverted = 0, msgDeduped = 0, backfilled = 0, backfillSkipped = 0;
 
   // === 1. Cancel duplicate jobs (same trigger_message_uuid) ===
   const allJobs = await base44.asServiceRole.entities.AIJob.list("-created_date", 500);
@@ -123,11 +123,83 @@ export default async function (req: Request): Promise<Response> {
     }
   }
 
+  // === 6. Backfill: answer fan messages that arrived while paused ===
+  // When the system was paused, ingest stored inbound fan messages but never
+  // created an AIJob (it logged message.paused and returned). After resume,
+  // those fans never get a reply because there's no job to recover. Find the
+  // newest unanswered inbound fan message per running conversation and create
+  // + process a job for it so paused-out fans (incl. "unknown owl") get answered.
+  try {
+    const runningCreators = await base44.asServiceRole.entities.CreatorProfile.list("-created_date", 200);
+    const runningCreatorIds = new Set(
+      (runningCreators || [])
+        .filter((c: any) => c.automation_mode === "draft" || c.automation_mode === "full_auto")
+        .map((c: any) => c.id)
+    );
+    if (runningCreatorIds.size > 0) {
+      const sinceMs = Date.now() - 48 * 60 * 60 * 1000;
+      // Recent inbound fan messages within the window for running creators.
+      const candidateFanMsgs = (allMsgs || [])
+        .filter((m: any) =>
+          m.sender_type === "fan" &&
+          runningCreatorIds.has(m.creator_profile_id) &&
+          new Date(m.created_date).getTime() > sinceMs
+        );
+      // Newest fan message per conversation
+      const newestPerConv: Record<string, any> = {};
+      for (const m of candidateFanMsgs) {
+        const cur = newestPerConv[m.conversation_id];
+        if (!cur || new Date(m.created_date) > new Date(cur.created_date)) {
+          newestPerConv[m.conversation_id] = m;
+        }
+      }
+      // Active (non-cancelled/failed) jobs indexed by trigger UUID — if one
+      // exists for a message, the normal recovery passes already own it.
+      const existingJobTriggers = new Set(
+        (allJobs || [])
+          .filter((j: any) => j.trigger_message_uuid && j.status !== "cancelled" && j.status !== "failed")
+          .map((j: any) => j.trigger_message_uuid)
+      );
+      // Creator/AI replies indexed by conversation — a fan message is
+      // "answered" if any creator/ai message is newer than it.
+      const answeredByConv: Record<string, any[]> = {};
+      for (const m of (allMsgs || [])) {
+        if (m.sender_type === "creator" || m.source === "ai") {
+          (answeredByConv[m.conversation_id] = answeredByConv[m.conversation_id] || []).push(m);
+        }
+      }
+      for (const [, fanMsg] of Object.entries(newestPerConv)) {
+        if (backfilled >= 25) break;
+        const triggerUuid = fanMsg.external_uuid || fanMsg.id;
+        if (existingJobTriggers.has(triggerUuid)) { backfillSkipped++; continue; }
+        const replies = answeredByConv[fanMsg.conversation_id] || [];
+        const answered = replies.some((r: any) => new Date(r.created_date) > new Date(fanMsg.created_date));
+        if (answered) { backfillSkipped++; continue; }
+        try {
+          const job = await base44.asServiceRole.entities.AIJob.create({
+            creator_profile_id: fanMsg.creator_profile_id,
+            conversation_id: fanMsg.conversation_id,
+            trigger_message_uuid: triggerUuid,
+            status: "pending",
+            stage: "ingested",
+            job_created_at: new Date().toISOString(),
+          });
+          await processAIJob(base44, fanMsg.conversation_id, job.id, triggerUuid);
+          backfilled++;
+        } catch (err) {
+          console.error("[recover] backfill", fanMsg.id, (err as any).message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[recover] backfill pass failed:", (err as any).message);
+  }
+
   await base44.asServiceRole.entities.ActivityLog.create({
     event_type: "runner.recovery",
     status: failed > 0 ? "warning" : "success",
-    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${failed} failed`,
-    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, failed, stuckFound: stuckToRecover.length },
+    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${backfilled} backfilled, ${failed} failed`,
+    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, backfilled, backfillSkipped, failed, stuckFound: stuckToRecover.length },
   });
 
   return Response.json({
@@ -137,6 +209,8 @@ export default async function (req: Request): Promise<Response> {
     needsApprovalConverted,
     duplicatesCancelled,
     msgDeduped,
+    backfilled,
+    backfillSkipped,
     failed,
     stuckFound: stuckToRecover.length,
   });
