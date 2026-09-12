@@ -27,6 +27,7 @@ export default function ChatThread({
   onClearDraft,
   onModeChange,
   onTogglePause,
+  onRetryMessage,
   generating,
   sending,
   loading,
@@ -178,7 +179,14 @@ export default function ChatThread({
             <p className="text-sm text-muted-foreground">No messages yet</p>
           </div>
         ) : (
-          messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)
+          messages.map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              creatorProfileId={conversation?.creator_profile_id}
+              onRetry={onRetryMessage}
+            />
+          ))
         )}
       </div>
 

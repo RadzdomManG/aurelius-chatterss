@@ -16,6 +16,7 @@ import {
   Bell,
   FileText,
   Webhook,
+  Lock,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import LiveActivityBell from "@/components/shared/LiveActivityBell";
@@ -48,6 +49,7 @@ const NAV_GROUPS = [
     label: "Content",
     items: [
       { to: "/media", label: "Media", icon: Image },
+      { to: "/ppv-content", label: "PPV Content", icon: Lock },
       { to: "/playground", label: "Playground", icon: FlaskConical },
       { to: "/templates", label: "Templates", icon: FileText },
     ],

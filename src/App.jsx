@@ -38,6 +38,7 @@ const Analytics = lazy(() => import('@/pages/Analytics'));
 const Activity = lazy(() => import('@/pages/Activity'));
 const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
 const Settings = lazy(() => import('@/pages/Settings'));
+const PpvContent = lazy(() => import('@/pages/PpvContent'));
 
 function PageSkeleton() {
   return (
@@ -96,6 +97,7 @@ const AuthenticatedApp = () => {
           <Route path="/notifications" element={<PageWrapper><Notifications /></PageWrapper>} />
           <Route path="/subscribers" element={<PageWrapper><Subscribers /></PageWrapper>} />
           <Route path="/media" element={<PageWrapper><Media /></PageWrapper>} />
+          <Route path="/ppv-content" element={<PageWrapper><PpvContent /></PageWrapper>} />
           <Route path="/playground" element={<PageWrapper><Playground /></PageWrapper>} />
           <Route path="/templates" element={<PageWrapper><Templates /></PageWrapper>} />
           <Route path="/webhooks" element={<PageWrapper><Webhooks /></PageWrapper>} />

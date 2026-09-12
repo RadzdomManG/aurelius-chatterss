@@ -255,6 +255,7 @@ const AI_JSON_SCHEMA = {
     sentiment: { type: "string" },
     suggested_ppv_cents: { type: "number" },
     ppv_reason: { type: "string" },
+    chosen_set_id: { type: "string", description: "If offering PPV, the id of the curated content set whose description best matches the fan's mood/request. null if not offering. Pick only from the set catalog provided in the message." },
     memory_updates: {
       type: "array",
       items: { type: "object", properties: { key: { type: "string" }, value: { type: "string" } } },
@@ -514,6 +515,29 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     const ppvAllowed = !!settings.ppv_allowed && ppvWindowOpen;
     const ladderStr = getEnabledLadder(settings).map((c) => `$${c / 100}`).join(", ");
 
+    // === CURATED PPV CONTENT SETS ===
+    // The operator pre-builds content bundles (media + description + suggested
+    // price) on the PPV Content page. When PPV is allowed, we load active sets
+    // for this creator, exclude any set already sent to this fan, and expose
+    // the catalog to the LLM so it can pick the best-matching set. The set's
+    // media_uuids are attached so the content is actually locked; the ladder
+    // remains the price authority (the set's suggested price is a hint only).
+    let contentSets: any[] = [];
+    let availableSets: any[] = [];
+    let setCatalogStr = "(no curated sets available)";
+    if (ppvAllowed || forcePpv) {
+      const [allSets, sentTracking] = await Promise.all([
+        base44.asServiceRole.entities.PpvContentSet.filter({ creator_profile_id: creatorProfileId, active: true }, "created_date", 50),
+        base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 50),
+      ]);
+      contentSets = allSets || [];
+      const sentSetIds = new Set((sentTracking || []).map((t: any) => t.content_set_id));
+      availableSets = contentSets.filter((s: any) => !sentSetIds.has(s.id));
+      setCatalogStr = availableSets.length > 0
+        ? availableSets.map((s: any) => `id: ${s.id} | name: "${s.name}" | description: ${s.description || s.name} | suggested_price: $${((s.suggested_price_cents || 1200) / 100).toFixed(2)}`).join("\n")
+        : "(no curated sets available — do NOT offer PPV this turn; you have nothing locked to send)";
+    }
+
     // Inject conversation continuity context
     const continuityContext = [
       conversation.last_topic ? `Last topic discussed: ${conversation.last_topic}` : null,
@@ -647,7 +671,9 @@ BANNED RECENT QUESTIONS (do NOT re-ask these or anything close — vary the angl
 ${bannedQuestionsStr}
 
 SALES CONTEXT:
-${ppvAllowed ? `- PPV is ALLOWED right now. Offer it ONLY when the fan is clearly turned on.\n- NEVER mention price, money, or picture counts — tease the content only.\n- Keep it suggestive and teasing, never graphic or explicit.\n- Valid price rungs (internal, never spoken): ${ladderStr}\n- Start low ($10–12) for newer fans, climb toward $400 as rapport/heat grows. Pick the rung matching heat + relationship.` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn. Just keep the conversation warm and suggestive.`}
+${ppvAllowed ? `- PPV is ALLOWED right now. Offer it ONLY when the fan is clearly turned on.\n- NEVER mention price, money, or picture counts — tease the content only.\n- Keep it suggestive and teasing, never graphic or explicit.\n- Valid price rungs (internal, never spoken): ${ladderStr}\n- Start low ($10–12) for newer fans, climb toward $400 as rapport/heat grows. Pick the rung matching heat + relationship.
+- CONTENT SETS (curated locked bundles — choose the ONE whose description best matches the fan's mood/request and put its id in chosen_set_id; the system attaches its media and sets the price):
+${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn. Just keep the conversation warm and suggestive.`}
 ${forcePpv ? "\nFORCE PPV THIS TURN: The fan has now asked for explicit content 3+ times — a clear buying signal, and a PPV slot is open. You MUST offer a PPV in the LAST bubble this turn. Keep it SUGGESTIVE and teasing (never graphic), like sharing something private and risky. NEVER mention price, money, or picture counts — the system handles both. Pick the price rung that matches this fan's heat + rapport (start low for newer fans, climb from there)." : ""}
 ${tooManyQuestions ? "\nNOTE: You have asked questions in your last several replies. Still end with a question this time, but make it a genuinely fresh angle — different topic, different kind of question — and do not repeat any banned recent question." : ""}
 
@@ -684,6 +710,12 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       } catch (escErr) {
         console.error("[ai] PPV escalation to grok-3 failed, keeping mini result:", (escErr as any).message);
       }
+    }
+
+    // === Resolve curated content set chosen by the AI ===
+    let chosenSet: any = null;
+    if (ppvAllowed && aiResult.chosen_set_id) {
+      chosenSet = availableSets.find((s: any) => s.id === aiResult.chosen_set_id) || null;
     }
 
     // Normalize to an array of single-line bubbles (no line breaks inside a bubble)
@@ -833,34 +865,36 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         }
       }
 
-      // === PPV LOCKING: attach default vault media if PPV is offered ===
+      // === PPV LOCKING: attach the curated content set so content is locked ===
       let mediaForSend: any = null;
       let attachedMediaUuids: string[] = [];
+      let chosenSetId: string | null = null;
       if (ppvCents && ppvCents > 0) {
-        const accessToken = await getValidAccessToken(connection, base44);
-        const defaultMediaUuids = await getDefaultPpvMedia(accessToken, settings);
-        if (defaultMediaUuids && defaultMediaUuids.length > 0) {
-          attachedMediaUuids = defaultMediaUuids;
+        // Use the AI-chosen set, or fall back to the first available set if the
+        // AI offered a PPV but didn't pick one (e.g. 3-strike force path).
+        const setToAttach = chosenSet || (availableSets.length > 0 ? availableSets[0] : null);
+        if (setToAttach && Array.isArray(setToAttach.media_uuids) && setToAttach.media_uuids.length > 0) {
+          attachedMediaUuids = setToAttach.media_uuids.slice(0, 5);
+          chosenSetId = setToAttach.id;
           mediaForSend = {
-            mediaUuids: defaultMediaUuids,
-            mediaPreviewUuid: defaultMediaUuids[0],
+            mediaUuids: attachedMediaUuids,
+            mediaPreviewUuid: attachedMediaUuids[0],
           };
-          // Update conversation PPV offer tracking
           await base44.asServiceRole.entities.Conversation.update(conversationId, {
             last_ppv_offer_at: new Date().toISOString(),
             ppv_offer_count: (conversation.ppv_offer_count || 0) + 1,
           });
         } else {
-          // No vault media available — Fanvue rejects PPV sends with no media
-          // ("not possible to send a pay-to-view message with no media attached").
-          // Downgrade to a free message so the reply still goes through.
+          // No curated content set available — Fanvue rejects PPV sends with no
+          // media, so downgrade to a free message and warn the operator that the
+          // content library is empty. Without this, PPV offers silently vanish.
           ppvCents = null;
           await base44.asServiceRole.entities.ActivityLog.create({
             creator_profile_id: creatorProfileId,
             conversation_id: conversationId,
-            event_type: "ai.ppv_no_media_downgrade",
+            event_type: "ai.ppv_no_set_downgrade",
             status: "warning",
-            message: `PPV offer downgraded to free message — no vault media available`,
+            message: `PPV offer downgraded to free message — no active curated content sets for this creator. Add sets on the PPV Content page.`,
             metadata: { job_id: job.id },
           });
         }
@@ -912,8 +946,25 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         stage: "completed",
         fanvue_sent_at: new Date().toISOString(),
         ppv_cents: ppvCents,
+        content_set_id: chosenSetId,
         attached_media_uuids: attachedMediaUuids,
       });
+
+      // Record which curated set was sent to this fan so it can be excluded
+      // on the next offer (the fan progresses through the library, never
+      // receiving the same locked bundle twice).
+      if (ppvCents && chosenSetId) {
+        try {
+          await base44.asServiceRole.entities.PpvOfferTracking.create({
+            creator_profile_id: creatorProfileId,
+            fan_id: conversation.fan_id,
+            conversation_id: conversationId,
+            content_set_id: chosenSetId,
+            sent_at: new Date().toISOString(),
+            price_cents: ppvCents,
+          });
+        } catch (e) {}
+      }
 
       await base44.asServiceRole.entities.ActivityLog.create({
         creator_profile_id: creatorProfileId,
@@ -926,7 +977,9 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
 
       return { success: true, action: "auto_sent", jobId: job.id, bubbles: replies.length };
     } else {
-      // DRAFT mode: always store for approval
+      // DRAFT mode: always store for approval. Carry the chosen set + media so
+      // the operator's Approve & Send attaches the same locked content.
+      const draftAttachedMedia = chosenSet ? chosenSet.media_uuids.slice(0, 5) : [];
       await base44.asServiceRole.entities.AIJob.update(job.id, {
         status: "needs_approval",
         reply_text: replyText,
@@ -934,6 +987,8 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         stage: "completed",
         ai_completed_at: new Date().toISOString(),
         ppv_cents: ppvCents,
+        content_set_id: chosenSet ? chosenSet.id : null,
+        attached_media_uuids: draftAttachedMedia,
       });
 
       await base44.asServiceRole.entities.ActivityLog.create({

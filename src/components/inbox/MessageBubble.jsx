@@ -1,11 +1,17 @@
 import React from "react";
 import { format } from "date-fns";
-import { Bot, Lock, DollarSign, ImageIcon, Film } from "lucide-react";
+import { Bot, Lock, AlertCircle, RefreshCw } from "lucide-react";
+import MessageMedia from "@/components/inbox/MessageMedia";
 
-export default function MessageBubble({ message }) {
+export default function MessageBubble({ message, creatorProfileId, onRetry }) {
   const isFan = message.sender_type === "fan";
-  const isAI = message.sender_type === "ai";
   const isSystem = message.sender_type === "system";
+  // AI origin is signaled by source === "ai" (the processor stores AI replies
+  // as sender_type "creator" so Fanvue sees them as the creator, with source
+  // "ai" as the operator cue). Detecting via sender_type === "ai" never matched.
+  const isAI = message.source === "ai";
+  const isFailed = message.send_status === "failed";
+  const isPending = message.send_status === "pending";
   const hasMedia = Array.isArray(message.media) && message.media.length > 0;
 
   if (isSystem) {
@@ -20,19 +26,21 @@ export default function MessageBubble({ message }) {
 
   return (
     <div className={`flex ${isFan ? "justify-start" : "justify-end"} px-4 py-1`}>
-      <div className={`max-w-[75%] ${isFan ? "items-start" : "items-end"} flex flex-col gap-1`}>
+      <div className={`flex max-w-[75%] flex-col gap-1 ${isFan ? "items-start" : "items-end"}`}>
         {/* Header label */}
-        <div className={`flex items-center gap-1.5 px-1 ${isFan ? "" : "flex-row-reverse"}`}>
-          {isAI && (
-            <span className="flex items-center gap-1 text-[10px] font-medium text-primary">
-              <Bot className="h-3 w-3" />
-              AI
-            </span>
-          )}
-          {isAI && message.source === "ai" && !message.body?.startsWith("[") && (
-            <span className="text-[10px] text-muted-foreground/60">auto</span>
-          )}
-        </div>
+        {(isAI || isPending) && (
+          <div className={`flex items-center gap-1.5 px-1 ${isFan ? "" : "flex-row-reverse"}`}>
+            {isAI && (
+              <span className="flex items-center gap-1 text-[10px] font-medium text-primary">
+                <Bot className="h-3 w-3" />
+                AI
+              </span>
+            )}
+            {isPending && (
+              <span className="text-[10px] text-muted-foreground/60">sending…</span>
+            )}
+          </div>
+        )}
 
         {/* Bubble */}
         <div
@@ -40,43 +48,55 @@ export default function MessageBubble({ message }) {
             isFan
               ? "rounded-bl-md bg-secondary text-secondary-foreground"
               : isAI
-              ? "rounded-br-md border border-primary/20 bg-primary/5 text-foreground"
-              : "rounded-br-md bg-primary text-primary-foreground"
+              ? `rounded-br-md border bg-primary/5 text-foreground ${
+                  isFailed ? "border-destructive/50" : "border-primary/20"
+                }`
+              : `rounded-br-md bg-primary text-primary-foreground ${
+                  isFailed ? "ring-1 ring-destructive/50" : ""
+                }`
           }`}
         >
           {/* PPV lock indicator */}
           {message.ppv_cents > 0 && (
-            <div className={`mb-1 flex items-center gap-1 text-xs font-medium ${
-              isFan ? "text-warning" : "opacity-80"
-            }`}>
+            <div
+              className={`mb-1 flex items-center gap-1 text-xs font-medium ${
+                isFan ? "text-warning" : "opacity-80"
+              }`}
+            >
               <Lock className="h-3 w-3" />
               PPV ${(message.ppv_cents / 100).toFixed(2)}
             </div>
           )}
 
-          {/* Media attachments indicator */}
+          {/* Media thumbnails */}
           {hasMedia && (
-            <div className={`mb-1 flex items-center gap-1.5 text-xs ${
-              isFan ? "text-muted-foreground" : "opacity-80"
-            }`}>
-              <div className="flex items-center gap-1">
-                <Film className="h-3 w-3" />
-                <span>{message.media.length} media {message.media.length === 1 ? "item" : "items"}</span>
-              </div>
-              {message.ppv_cents > 0 && (
-                <span className="flex items-center gap-0.5 text-warning">
-                  <Lock className="h-2.5 w-2.5" />
-                  Locked
-                </span>
-              )}
-            </div>
+            <MessageMedia mediaUuids={message.media} creatorProfileId={creatorProfileId} />
           )}
 
           {message.body && (
             <p className="whitespace-pre-wrap break-words">{message.body}</p>
           )}
           {hasMedia && !message.body && (
-            <p className="text-xs italic opacity-60">[Media only]</p>
+            <p className="text-xs italic opacity-60">[media only]</p>
+          )}
+
+          {/* Failed-send footer */}
+          {isFailed && (
+            <div className="mt-2 flex items-center gap-2 border-t border-destructive/30 pt-1.5">
+              <span className="flex items-center gap-1 text-[11px] text-destructive">
+                <AlertCircle className="h-3 w-3" />
+                Failed to send
+              </span>
+              {onRetry && (
+                <button
+                  onClick={() => onRetry(message)}
+                  className="flex items-center gap-1 rounded text-[11px] font-medium text-destructive hover:underline"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Retry
+                </button>
+              )}
+            </div>
           )}
         </div>
 

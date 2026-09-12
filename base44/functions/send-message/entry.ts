@@ -13,7 +13,7 @@ export default async function(req) {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { conversationId, body: messageBody, ppvCents, mediaUuids, mediaPreviewUuid } = parsedBody;
+    const { conversationId, body: messageBody, ppvCents, mediaUuids, mediaPreviewUuid, messageId } = parsedBody;
 
     if (!conversationId || (!messageBody && !mediaUuids?.length)) {
       return Response.json({ error: "conversationId and either body or mediaUuids are required" }, { status: 400 });
@@ -58,17 +58,17 @@ export default async function(req) {
       media
     );
 
-    // Update the stored message with the external UUID
-    const messages = await base44.asServiceRole.entities.Message.filter(
-      { conversation_id: conversationId, sender_type: "creator", body: messageBody },
-      "-created_date",
-      1
-    );
-    if (messages[0] && result.messageUuid) {
-      await base44.asServiceRole.entities.Message.update(messages[0].id, {
-        external_uuid: result.messageUuid,
-        source: "fanvue",
-      });
+    // Update the stored message with the external UUID + mark it sent.
+    // Patch the EXACT record the caller created (by messageId) instead of
+    // matching by body text — body-matching collided with duplicates and
+    // empty bodies and produced wrong-record patches.
+    if (messageId && result.messageUuid) {
+      try {
+        await base44.asServiceRole.entities.Message.update(messageId, {
+          external_uuid: result.messageUuid,
+          send_status: "sent",
+        });
+      } catch (e) {}
     }
 
     // Log activity

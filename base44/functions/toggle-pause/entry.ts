@@ -12,11 +12,34 @@ export default async function (req: Request): Promise<Response> {
   try { body = await req.json(); } catch (e) {}
   const base44 = createClientFromRequest(req);
 
-  try { await base44.auth.me(); } catch (e) {
+  let authUser: any = null;
+  try { authUser = await base44.auth.me(); } catch (e) {
     return Response.json({ error: "Not authenticated" }, { status: 401 });
   }
 
   const action = body.action || "status";
+
+  // Role gate: pausing/resuming the whole system is destructive — admin/owner only.
+  // "status" stays open to any authenticated user (read-only).
+  if (action === "pause" || action === "resume") {
+    const isAdmin = authUser?.role === "admin";
+    let isOrgAdmin = false;
+    if (!isAdmin && authUser?.id) {
+      try {
+        const memberships = await base44.asServiceRole.entities.OrganizationMember.filter({ user_id: authUser.id }, "-created_date", 20);
+        isOrgAdmin = (memberships || []).some((m: any) => m.role === "owner" || m.role === "admin");
+      } catch (e) {}
+    }
+    if (!isAdmin && !isOrgAdmin) {
+      await base44.asServiceRole.entities.ActivityLog.create({
+        event_type: "system.pause_denied",
+        status: "warning",
+        message: `Pause/resume denied for non-admin user`,
+        metadata: { action, user_id: authUser?.id },
+      });
+      return Response.json({ error: "Admin access required to pause or resume the system" }, { status: 403 });
+    }
+  }
 
   if (action === "status") {
     const config = await getAppConfig(base44);

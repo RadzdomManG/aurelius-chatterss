@@ -242,6 +242,13 @@ export default function Inbox() {
           reply: pendingJobs[0].reply_text,
           confidence: pendingJobs[0].confidence,
           jobId: pendingJobs[0].id,
+          // Carry the locked content + price the AI chose so Approve & Send
+          // actually delivers a locked PPV instead of a free text message.
+          ppvCents: pendingJobs[0].ppv_cents || null,
+          mediaUuids: Array.isArray(pendingJobs[0].attached_media_uuids) && pendingJobs[0].attached_media_uuids.length
+            ? pendingJobs[0].attached_media_uuids
+            : null,
+          contentSetId: pendingJobs[0].content_set_id || null,
         });
       } else {
         setDraft(null);
@@ -288,7 +295,9 @@ export default function Inbox() {
     try {
       setSending(true);
 
-      // Store message in database
+      // Optimistic send: store as "pending" so the bubble shows a sending
+      // state, then flip to "sent" on Fanvue confirm or "failed" (with a
+      // Retry button) on error — never a silent phantom sent bubble.
       const msg = await base44.entities.Message.create({
         creator_profile_id: selectedConversation.creator_profile_id,
         conversation_id: selectedId,
@@ -297,6 +306,7 @@ export default function Inbox() {
         media: mediaUuids || null,
         ppv_cents: ppvCents || null,
         source: "manual",
+        send_status: "pending",
       });
       setMessages((prev) => {
         if (prev.some((m) => m.id === msg.id)) return prev;
@@ -313,7 +323,8 @@ export default function Inbox() {
         prev.map((c) => c.id === selectedId ? { ...c, last_message_at: now, last_message_preview: body, last_sender_type: "creator" } : c)
       );
 
-      // Attempt Fanvue delivery via backend function
+      // Attempt Fanvue delivery via backend function — patch the exact record
+      // by messageId so the outbound webhook doesn't duplicate it.
       try {
         await base44.functions.invoke("send-message", {
           conversationId: selectedId,
@@ -321,10 +332,14 @@ export default function Inbox() {
           ppvCents: ppvCents || null,
           mediaUuids: mediaUuids || null,
           mediaPreviewUuid: mediaPreviewUuid || null,
+          messageId: msg.id,
         });
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, send_status: "sent" } : m)));
         toast.success("Message sent to Fanvue");
       } catch (fnErr) {
-        toast.error("Fanvue delivery failed — message saved locally: " + (fnErr.response?.data?.error || fnErr.message || "Unknown error"));
+        await base44.entities.Message.update(msg.id, { send_status: "failed" }).catch(() => {});
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, send_status: "failed" } : m)));
+        toast.error("Fanvue delivery failed — tap Retry on the message");
       }
 
       await base44.entities.ActivityLog.create({
@@ -415,6 +430,10 @@ export default function Inbox() {
     const reply = draft.reply;
     const conv = conversations.find((c) => c.id === selectedId);
     const jobId = draft.jobId;
+    // Carry the AI's locked content + price so approving a draft actually
+    // delivers a PPV, not a free text bubble.
+    const draftPpvCents = draft.ppvCents || null;
+    const draftMediaUuids = draft.mediaUuids || null;
     setDraft(null);
     setComposerValue("");
 
@@ -426,7 +445,10 @@ export default function Inbox() {
         conversation_id: selectedId,
         sender_type: "creator",
         body: reply,
+        media: draftMediaUuids || null,
+        ppv_cents: draftPpvCents || null,
         source: "ai",
+        send_status: "pending",
       });
       setMessages((prev) => {
         if (prev.some((m) => m.id === msg.id)) return prev;
@@ -448,10 +470,20 @@ export default function Inbox() {
       }
 
       try {
-        await base44.functions.invoke("send-message", { conversationId: selectedId, body: reply });
+        await base44.functions.invoke("send-message", {
+          conversationId: selectedId,
+          body: reply,
+          ppvCents: draftPpvCents,
+          mediaUuids: draftMediaUuids,
+          mediaPreviewUuid: draftMediaUuids ? draftMediaUuids[0] : null,
+          messageId: msg.id,
+        });
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, send_status: "sent" } : m)));
         toast.success("AI draft sent to Fanvue");
       } catch (fnErr) {
-        toast.error("Fanvue delivery failed — message saved locally");
+        await base44.entities.Message.update(msg.id, { send_status: "failed" }).catch(() => {});
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, send_status: "failed" } : m)));
+        toast.error("Fanvue delivery failed — tap Retry on the message");
       }
 
       await base44.entities.ActivityLog.create({
@@ -493,6 +525,27 @@ export default function Inbox() {
     }
   };
 
+  const handleRetryMessage = async (message) => {
+    try {
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, send_status: "pending" } : m)));
+      await base44.entities.Message.update(message.id, { send_status: "pending" }).catch(() => {});
+      await base44.functions.invoke("send-message", {
+        conversationId: message.conversation_id,
+        body: message.body,
+        ppvCents: message.ppv_cents || null,
+        mediaUuids: Array.isArray(message.media) && message.media.length ? message.media : null,
+        mediaPreviewUuid: Array.isArray(message.media) && message.media.length ? message.media[0] : null,
+        messageId: message.id,
+      });
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, send_status: "sent" } : m)));
+      toast.success("Message sent to Fanvue");
+    } catch (fnErr) {
+      await base44.entities.Message.update(message.id, { send_status: "failed" }).catch(() => {});
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, send_status: "failed" } : m)));
+      toast.error("Fanvue delivery failed");
+    }
+  };
+
   const hasConnection = connection?.status === "connected";
 
   return (
@@ -527,6 +580,7 @@ export default function Inbox() {
             onClearDraft={() => setDraft(null)}
             onModeChange={handleModeChange}
             onTogglePause={handleTogglePause}
+            onRetryMessage={handleRetryMessage}
             generating={generating}
             sending={sending}
             loading={loadingMessages}
