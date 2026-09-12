@@ -55,17 +55,50 @@ export default function AutomationModeHeader() {
     }
   };
 
+  // Engaging a running mode / Resume bot MUST clear the global pause first —
+  // otherwise isPaused() stays true and every job skips with GLOBAL_PAUSED,
+  // so the bot never actually runs no matter what the mode buttons say.
+  // Resuming only re-enables creators already in a running mode; others stay
+  // off, so this never surprise-starts a stopped creator.
+  const ensureSystemRunning = async () => {
+    if (!paused) return false;
+    try {
+      await base44.functions.invoke("toggle-pause", { action: "resume" });
+      setPaused(false);
+      return true;
+    } catch (e) {
+      toast.error("System is globally paused — resume failed (admin required)");
+      return false;
+    }
+  };
+
+  // Reset the circuit-breaker error state so a resume gives the creator a clean
+  // slate. The breaker re-trips only on fresh real send failures, which is
+  // the safety behavior we want — but a resume should never inherit a stale
+  // "error/disconnected" look from before the pause.
+  const clearCircuitBreaker = async (creatorId) => {
+    try {
+      await base44.entities.CreatorProfile.update(creatorId, { status: "active" });
+    } catch (e) {}
+    const s = settingsByCreator[creatorId];
+    if (s?.id && (s.consecutive_send_failures || 0) > 0) {
+      try {
+        await base44.entities.AutomationSettings.update(s.id, { consecutive_send_failures: 0 });
+        setSettingsByCreator((m) => ({ ...m, [creatorId]: { ...s, consecutive_send_failures: 0 } }));
+      } catch (e) {}
+    }
+  };
+
   const handleMode = async (mode) => {
     if (!selectedCreator) return;
     setSaving(true);
     try {
-      // If the whole system is globally paused, clicking Running/Draft must
-      // clear that pause first — otherwise the mode is silently overridden
-      // and the bot stays "paused" with no reply ever going out.
-      // Do NOT auto-resume the whole system when setting one creator to run —
-      // that would unpause EVERY creator. The operator resumes all explicitly
-      // via Resume All. While paused, the mode is set but the bot waits until
-      // the system is resumed.
+      // Engaging a running mode clears the global pause — otherwise the bot
+      // stays halted (GLOBAL_PAUSED) and the mode change is a silent no-op.
+      if (mode === "draft" || mode === "full_auto") {
+        await ensureSystemRunning();
+        await clearCircuitBreaker(selectedCreator.id);
+      }
       await base44.entities.CreatorProfile.update(selectedCreator.id, { automation_mode: mode });
       await reloadCreators();
       toast.success(`${selectedCreator.display_name}: ${MODES.find((m) => m.id === mode).label}`);
@@ -87,14 +120,18 @@ export default function AutomationModeHeader() {
     setSaving(true);
     try {
       if (currentMode === "off") {
-        // Resuming this creator. If the whole system is globally paused,
-        // clear that first so the bot actually runs.
+        // Resuming this creator. Clear the global pause first so the bot
+        // actually runs — without this, isPaused() stays true and every job
+        // skips with GLOBAL_PAUSED (the "bot not resume" bug).
+        await ensureSystemRunning();
+        await clearCircuitBreaker(selectedCreator.id);
         const restoreMode = selectedCreator.prior_automation_mode === "draft" || selectedCreator.prior_automation_mode === "full_auto"
           ? selectedCreator.prior_automation_mode
           : "draft";
         await base44.entities.CreatorProfile.update(selectedCreator.id, {
           automation_mode: restoreMode,
           prior_automation_mode: null,
+          status: "active",
         });
         await reloadCreators();
         flushJobs(selectedCreator.display_name);
