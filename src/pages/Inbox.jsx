@@ -193,7 +193,7 @@ export default function Inbox() {
             ? base44.entities.Conversation.filter({ creator_profile_id: selectedCreatorId }, "-updated_date", 50)
             : Promise.resolve([]),
           convIds.length > 0
-            ? Promise.allSettled(convIds.map((cid) => base44.entities.Message.filter({ conversation_id: cid }, "created_date", 100)))
+            ? Promise.allSettled(convIds.map((cid) => base44.entities.Message.filter({ conversation_id: cid }, "-created_date", 200)))
             : Promise.resolve([]),
         ]);
 
@@ -309,7 +309,7 @@ export default function Inbox() {
       activeConvIdsRef.current = convIds;
 
       const msgResults = await Promise.allSettled(
-        convIds.map((cid) => base44.entities.Message.filter({ conversation_id: cid }, "created_date", 100))
+        convIds.map((cid) => base44.entities.Message.filter({ conversation_id: cid }, "-created_date", 200))
       );
       if (myToken !== loadTokenRef.current) return;
       const merged = new Map();
