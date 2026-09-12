@@ -1,5 +1,6 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
+import { useCreator } from "@/lib/creator-context";
 
 // fanvue-gateway — single frontend entry to the registry-backed fanvue-api proxy.
 // `fanvueCall(operationId, opts)` returns { operationId, data } or throws an object
