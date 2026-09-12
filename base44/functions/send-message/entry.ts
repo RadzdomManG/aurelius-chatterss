@@ -1,4 +1,4 @@
-import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
+import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { secrets } from "base44:runtime";
 import { getValidAccessToken, sendFanvueMessage } from "../../shared/fanvue-api.ts";
 
@@ -62,10 +62,10 @@ export default async function(req) {
     // Patch the EXACT record the caller created (by messageId) instead of
     // matching by body text — body-matching collided with duplicates and
     // empty bodies and produced wrong-record patches.
-    if (messageId && result.messageUuid) {
+    if (messageId) {
       try {
         await base44.asServiceRole.entities.Message.update(messageId, {
-          external_uuid: result.messageUuid,
+          ...(result.messageUuid ? { external_uuid: result.messageUuid } : {}),
           send_status: "sent",
         });
       } catch (e) {}

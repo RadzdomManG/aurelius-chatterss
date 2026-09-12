@@ -28,7 +28,7 @@ export default function AutomationModeHeader() {
   const load = async () => {
     try {
       const [settingsList, pauseStatus] = await Promise.all([
-        base44.entities.AutomationSettings.list("-created_date", 50),
+        base44.entities.AutomationSettings.list("-created_date", 200),
         base44.functions.invoke("toggle-pause", { action: "status" }).catch(() => null),
       ]);
       const sMap = {};
@@ -62,15 +62,10 @@ export default function AutomationModeHeader() {
       // If the whole system is globally paused, clicking Running/Draft must
       // clear that pause first — otherwise the mode is silently overridden
       // and the bot stays "paused" with no reply ever going out.
-      if (paused && (mode === "draft" || mode === "full_auto")) {
-        try {
-          const res = await base44.functions.invoke("toggle-pause", { action: "resume" });
-          setPaused(false);
-          toast.success(`Resumed all — restored ${res?.restored || 0} creator(s)`);
-        } catch (e) {
-          toast.error("Failed to resume system");
-        }
-      }
+      // Do NOT auto-resume the whole system when setting one creator to run —
+      // that would unpause EVERY creator. The operator resumes all explicitly
+      // via Resume All. While paused, the mode is set but the bot waits until
+      // the system is resumed.
       await base44.entities.CreatorProfile.update(selectedCreator.id, { automation_mode: mode });
       await reloadCreators();
       toast.success(`${selectedCreator.display_name}: ${MODES.find((m) => m.id === mode).label}`);
@@ -94,18 +89,9 @@ export default function AutomationModeHeader() {
       if (currentMode === "off") {
         // Resuming this creator. If the whole system is globally paused,
         // clear that first so the bot actually runs.
-        if (paused) {
-          try {
-            const res = await base44.functions.invoke("toggle-pause", { action: "resume" });
-            setPaused(false);
-            toast.success(`Resumed all — restored ${res?.restored || 0} creator(s)`);
-          } catch (e) {
-            toast.error("Failed to resume system");
-          }
-        }
         const restoreMode = selectedCreator.prior_automation_mode === "draft" || selectedCreator.prior_automation_mode === "full_auto"
           ? selectedCreator.prior_automation_mode
-          : "full_auto";
+          : "draft";
         await base44.entities.CreatorProfile.update(selectedCreator.id, {
           automation_mode: restoreMode,
           prior_automation_mode: null,

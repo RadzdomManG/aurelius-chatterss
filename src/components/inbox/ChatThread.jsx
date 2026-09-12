@@ -58,12 +58,23 @@ export default function ChatThread({
   const lastMsg = Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null;
   const needsAIReply = lastMsg?.sender_type === "fan" && !generating && !triggeringAI;
 
+  const handleMarkRead = async () => {
+    setMenuOpen(false);
+    try { await base44.entities.Conversation.update(conversation.id, { unread_count: 0 }); toast.success("Marked as read"); } catch (e) { toast.error("Failed to mark read"); }
+  };
+  const handleArchive = async () => {
+    setMenuOpen(false);
+    try { await base44.entities.Conversation.update(conversation.id, { status: "archived" }); toast.success("Conversation archived"); } catch (e) { toast.error("Failed to archive"); }
+  };
+
   const handleTriggerAI = async () => {
     if (!conversation?.id) return;
     try {
       setTriggeringAI(true);
+      const lastFanMsg = [...(Array.isArray(messages) ? messages : [])].reverse().find((m) => m.sender_type === "fan");
       const res = await base44.functions.invoke("process-ai-job", {
         conversationId: conversation.id,
+        triggerMessageUuid: lastFanMsg?.external_uuid || lastFanMsg?.id || undefined,
       });
       if (res.data?.success || res.data?.skipped) {
         toast.success(res.data?.skipped ? `AI skipped: ${res.data.reason}` : "AI triggered");
@@ -78,6 +89,7 @@ export default function ChatThread({
   };
 
   const currentMode = conversation?.automation_mode_override || creator?.automation_mode || "off";
+  const hasOverride = conversation?.automation_mode_override != null;
 
   if (!conversation) {
     return (
@@ -98,7 +110,7 @@ export default function ChatThread({
       <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
         <div className="flex items-center gap-3">
           {fan?.avatar_url ? (
-            <img src={fan.avatar_url} alt="" className="h-9 w-9 rounded-full object-cover" />
+            <img src={fan.avatar_url} alt="" className="h-9 w-9 rounded-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
           ) : (
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/15 text-sm font-medium text-primary">
               {fan?.display_name?.charAt(0) || "?"}
@@ -138,6 +150,16 @@ export default function ChatThread({
             })}
           </div>
 
+          {hasOverride && (
+            <button
+              onClick={() => onModeChange("inherit")}
+              title="Reset to inherit this creator's automation mode"
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              Inherit
+            </button>
+          )}
+
           <button
             onClick={onTogglePause}
             className={`flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent ${
@@ -159,13 +181,13 @@ export default function ChatThread({
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
                 <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-md border border-border bg-popover py-1 shadow-md">
-                  <button className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent">
+                  <button onClick={() => setMenuOpen(false)} className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent">
                     Fan details
                   </button>
-                  <button className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent">
+                  <button onClick={handleMarkRead} className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent">
                     Mark as read
                   </button>
-                  <button className="w-full px-3 py-2 text-left text-sm text-destructive hover:bg-accent">
+                  <button onClick={handleArchive} className="w-full px-3 py-2 text-left text-sm text-destructive hover:bg-accent">
                     Archive conversation
                   </button>
                 </div>

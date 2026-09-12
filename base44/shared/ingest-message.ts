@@ -100,8 +100,22 @@ export async function ingestIncomingFanMessage(
     });
   }
 
-  // 4. Persist message (idempotency already checked in step 1)
+  // 4. Persist message (idempotency already checked in step 1). For messages
+  // with no Fanvue UUID, additionally dedup by body+sender within the same
+  // conversation in the last 10s — prevents duplicate media-only bubbles.
   const senderType = isOutbound ? "creator" : "fan";
+  if (!messageUuid) {
+    try {
+      const recent = await base44.asServiceRole.entities.Message.filter(
+        { conversation_id: conversation.id, sender_type: senderType, body: messageText },
+        "-created_date",
+        1
+      );
+      if (recent[0] && Date.now() - new Date(recent[0].created_date).getTime() < 10000) {
+        return { skipped: true, reason: "DUPLICATE_MESSAGE_NO_UUID", message: recent[0] };
+      }
+    } catch (e) {}
+  }
   const message = await base44.asServiceRole.entities.Message.create({
     creator_profile_id: creatorProfileId,
     conversation_id: conversation.id,

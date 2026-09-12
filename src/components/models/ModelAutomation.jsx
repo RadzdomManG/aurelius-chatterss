@@ -9,20 +9,22 @@ const MODES = [
   { id: "full_auto", label: "Running", icon: Play, description: "AI replies automatically — no approval needed. Use with a reviewed persona." },
 ];
 
-const PPV_TIERS = [1000, 1500, 2500, 3500, 5000, 7000, 9000];
+const PPV_TIERS = [1000, 1200, 1500, 2500, 5000, 10000, 20000, 30000, 40000];
 const fmtTier = (c) => `$${(c / 100).toFixed(0)}`;
 
 export default function ModelAutomation({ creator, autoSettings, onSaved }) {
   const [mode, setMode] = React.useState(creator.automation_mode || "off");
   const [settings, setSettings] = React.useState({
-    enabled: autoSettings?.enabled ?? false,
+    enabled: autoSettings?.enabled ?? true,
     approval_required: autoSettings?.approval_required ?? true,
     max_replies_per_hour: autoSettings?.max_replies_per_hour ?? 20,
     min_confidence: autoSettings?.min_confidence ?? 0.7,
     ppv_allowed: autoSettings?.ppv_allowed ?? true,
-    max_ppv_cents: autoSettings?.max_ppv_cents ?? 9000,
-    default_ppv_cents: autoSettings?.default_ppv_cents ?? 1000,
+    max_ppv_cents: autoSettings?.max_ppv_cents ?? 40000,
+    default_ppv_cents: autoSettings?.default_ppv_cents ?? 1200,
     ppv_ladder_enabled: autoSettings?.ppv_ladder_enabled ?? [...PPV_TIERS],
+    ppv_min_messages_between_offers: autoSettings?.ppv_min_messages_between_offers ?? 5,
+    ppv_min_minutes_between_offers: autoSettings?.ppv_min_minutes_between_offers ?? 10,
   });
   const [saving, setSaving] = React.useState(false);
 
@@ -30,14 +32,16 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
     setMode(creator.automation_mode || "off");
     if (autoSettings) {
       setSettings({
-        enabled: autoSettings.enabled,
-        approval_required: autoSettings.approval_required,
+        enabled: autoSettings.enabled ?? true,
+        approval_required: autoSettings.approval_required ?? true,
         max_replies_per_hour: autoSettings.max_replies_per_hour || 20,
         min_confidence: autoSettings.min_confidence || 0.7,
         ppv_allowed: autoSettings.ppv_allowed ?? true,
-        max_ppv_cents: autoSettings.max_ppv_cents || 9000,
-        default_ppv_cents: autoSettings.default_ppv_cents || 1000,
+        max_ppv_cents: autoSettings.max_ppv_cents || 40000,
+        default_ppv_cents: autoSettings.default_ppv_cents || 1200,
         ppv_ladder_enabled: autoSettings.ppv_ladder_enabled ?? [...PPV_TIERS],
+        ppv_min_messages_between_offers: autoSettings.ppv_min_messages_between_offers ?? 5,
+        ppv_min_minutes_between_offers: autoSettings.ppv_min_minutes_between_offers ?? 10,
       });
     }
   }, [creator, autoSettings]);
@@ -99,7 +103,6 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
 
       {/* Settings */}
       <div className="space-y-4 rounded-lg border border-border bg-card p-5">
-        <ToggleRow label="Automation Enabled" value={settings.enabled} onChange={(v) => setSettings({ ...settings, enabled: v })} />
         <ToggleRow label="Approval Required (Draft mode)" value={settings.approval_required} onChange={(v) => setSettings({ ...settings, approval_required: v })} />
         <ToggleRow label="PPV Allowed" value={settings.ppv_allowed} onChange={(v) => setSettings({ ...settings, ppv_allowed: v })} />
 
@@ -143,12 +146,24 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
             <div className="mt-3 grid grid-cols-2 gap-4">
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Default PPV (cents)</label>
-                <input type="number" min={1000} step={500} value={settings.default_ppv_cents} onChange={(e) => setSettings({ ...settings, default_ppv_cents: Math.max(1000, parseInt(e.target.value) || 1000) })}
+                <input type="number" min={1000} step={500} value={settings.default_ppv_cents} onChange={(e) => setSettings({ ...settings, default_ppv_cents: Math.max(1000, parseInt(e.target.value) || 1200) })}
                   className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Max PPV (cents)</label>
-                <input type="number" min={1000} step={500} value={settings.max_ppv_cents} onChange={(e) => setSettings({ ...settings, max_ppv_cents: Math.max(1000, parseInt(e.target.value) || 9000) })}
+                <input type="number" min={1000} step={500} value={settings.max_ppv_cents} onChange={(e) => setSettings({ ...settings, max_ppv_cents: Math.max(1000, parseInt(e.target.value) || 40000) })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Min Messages Between Offers</label>
+                <input type="number" min={1} value={settings.ppv_min_messages_between_offers} onChange={(e) => setSettings({ ...settings, ppv_min_messages_between_offers: Math.max(1, parseInt(e.target.value) || 5) })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Min Minutes Between Offers</label>
+                <input type="number" min={10} value={settings.ppv_min_minutes_between_offers} onChange={(e) => setSettings({ ...settings, ppv_min_minutes_between_offers: Math.max(10, parseInt(e.target.value) || 10) })}
                   className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
               </div>
             </div>

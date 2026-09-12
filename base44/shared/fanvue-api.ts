@@ -17,7 +17,7 @@ export function sleep(ms) {
 }
 
 export async function apiCall(path, accessToken, options = {}, maxRetries = 4) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     const res = await fetch(`${API_BASE}${path}`, {
       ...options,
       headers: {
@@ -32,7 +32,7 @@ export async function apiCall(path, accessToken, options = {}, maxRetries = 4) {
 
     if (isRateLimited && attempt < maxRetries) {
       // Exponential backoff: 2s, 4s, 8s, 16s
-      const waitMs = Math.pow(2, attempt + 1) * 1000;
+      const waitMs = Math.min(Math.pow(2, attempt + 1) * 1000, 8000);
       await sleep(waitMs);
       continue;
     }
@@ -42,7 +42,7 @@ export async function apiCall(path, accessToken, options = {}, maxRetries = 4) {
       // Also retry on rate limit errors returned in the body with other status codes
       const bodyIsRateLimit = /rate.?limit|too many requests/i.test(errorBody);
       if (bodyIsRateLimit && attempt < maxRetries) {
-        const waitMs = Math.pow(2, attempt + 1) * 1000;
+        const waitMs = Math.min(Math.pow(2, attempt + 1) * 1000, 8000);
         await sleep(waitMs);
         continue;
       }
@@ -172,22 +172,22 @@ export async function getValidAccessToken(connection, base44) {
   const encryptionKey = secrets.get("ENCRYPTION_KEY");
   const accessToken = await decryptToken(connection.encrypted_access_token, encryptionKey);
 
-  if (connection.access_token_expires_at) {
-    const expiresAt = new Date(connection.access_token_expires_at).getTime();
-    if (Date.now() > expiresAt - 300000) {
-      const refreshTokenValue = await decryptToken(connection.encrypted_refresh_token, encryptionKey);
-      const tokens = await refreshFanvueToken(refreshTokenValue);
-      const newEncryptedAccess = await encryptToken(tokens.access_token, encryptionKey);
-      const newEncryptedRefresh = await encryptToken(tokens.refresh_token, encryptionKey);
+  // If expiry is unknown, treat as expired and refresh once — a missing
+  // expires_at (rare) would otherwise cause silent 401s on the stale token.
+  const expiresAt = connection.access_token_expires_at ? new Date(connection.access_token_expires_at).getTime() : 0;
+  if (!expiresAt || Date.now() > expiresAt - 300000) {
+    const refreshTokenValue = await decryptToken(connection.encrypted_refresh_token, encryptionKey);
+    const tokens = await refreshFanvueToken(refreshTokenValue);
+    const newEncryptedAccess = await encryptToken(tokens.access_token, encryptionKey);
+    const newEncryptedRefresh = await encryptToken(tokens.refresh_token, encryptionKey);
 
-      await base44.asServiceRole.entities.FanvueConnection.update(connection.id, {
-        encrypted_access_token: newEncryptedAccess,
-        encrypted_refresh_token: newEncryptedRefresh,
-        access_token_expires_at: new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString(),
-      });
+    await base44.asServiceRole.entities.FanvueConnection.update(connection.id, {
+      encrypted_access_token: newEncryptedAccess,
+      encrypted_refresh_token: newEncryptedRefresh,
+      access_token_expires_at: new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString(),
+    });
 
-      return tokens.access_token;
-    }
+    return tokens.access_token;
   }
 
   return accessToken;

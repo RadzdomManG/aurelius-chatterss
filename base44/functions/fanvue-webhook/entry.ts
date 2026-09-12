@@ -19,14 +19,14 @@ const TOLERANCE_SECONDS = 300;
 
 const INBOUND_EVENTS = new Set(["message.received", "creator.message.received"]);
 const OUTBOUND_EVENTS = new Set(["message.sent", "creator.message.sent", "creator.message.mass_sent"]);
-const DELETE_EVENTS = new Set(["creator.message.deleted", "message.deleted"]);
-const READ_EVENTS = new Set(["creator.message.read", "creator.message.read_by_fan", "message.read"]);
+const DELETE_EVENTS = new Set(["creator.message.deleted"]);
+const READ_EVENTS = new Set(["creator.message.read", "creator.message.read_by_fan"]);
 
 // Fanvue delivers every message event in BOTH the creator.* and legacy message.*
 // formats simultaneously (~4ms apart). Both carry the same message UUID. Processing
 // both causes a race condition that double-persists the message. Skip the legacy
 // format entirely — the creator.* variant carries richer data and is always sent.
-const LEGACY_DUPLICATE_EVENTS = new Set(["message.received", "message.sent"]);
+const LEGACY_DUPLICATE_EVENTS = new Set(["message.received", "message.sent", "message.read", "message.deleted"]);
 
 function getHeader(req: any, name: string): string | null {
   try {
@@ -219,13 +219,26 @@ async function processMessageDeleted(base44: any, event: any) {
 async function processMessageRead(base44: any, event: any) {
   const data = event.data || event;
   const fanUuid = data.fan?.uuid || data.userUuid;
+  const creatorUuid = data.creator?.uuid || data.recipientUuid;
   if (!fanUuid) return;
   try {
-    const fans = await base44.asServiceRole.entities.Fan.filter({ external_uuid: fanUuid }, "-created_date", 1);
+    // Scope by creator when possible so a stale/colliding fan UUID can't reset
+    // the wrong account's unread badge, and clear EVERY duplicate conversation
+    // record for the fan (not just the first).
+    const fanFilter: any = { external_uuid: fanUuid };
+    if (creatorUuid) {
+      const conns = await base44.asServiceRole.entities.FanvueConnection.filter({ external_user_uuid: creatorUuid, status: "connected" }, "-created_date", 1);
+      if (conns[0]) fanFilter.creator_profile_id = conns[0].creator_profile_id;
+    }
+    const fans = await base44.asServiceRole.entities.Fan.filter(fanFilter, "-created_date", 5);
     if (!fans[0]) return;
-    const convos = await base44.asServiceRole.entities.Conversation.filter({ fan_id: fans[0].id }, "-created_date", 1);
-    if (convos[0]) {
-      await base44.asServiceRole.entities.Conversation.update(convos[0].id, { unread_count: 0 });
+    for (const fan of fans) {
+      const convos = await base44.asServiceRole.entities.Conversation.filter({ fan_id: fan.id }, "-created_date", 10);
+      for (const c of convos) {
+        if (c.unread_count > 0) {
+          await base44.asServiceRole.entities.Conversation.update(c.id, { unread_count: 0 });
+        }
+      }
     }
   } catch (e) {}
 }
@@ -233,12 +246,18 @@ async function processMessageRead(base44: any, event: any) {
 async function processFanStatusChanged(base44: any, event: any) {
   const data = event.data || event;
   const fanUuid = data.fan?.uuid || data.user?.uuid || data.uuid;
+  const creatorUuid = data.creator?.uuid;
   const status = data.status || data.subscription_status;
   if (!fanUuid) return;
   try {
-    const fans = await base44.asServiceRole.entities.Fan.filter({ external_uuid: fanUuid }, "-created_date", 1);
-    if (fans[0]) {
-      await base44.asServiceRole.entities.Fan.update(fans[0].id, { subscription_status: status });
+    const fanFilter: any = { external_uuid: fanUuid };
+    if (creatorUuid) {
+      const conns = await base44.asServiceRole.entities.FanvueConnection.filter({ external_user_uuid: creatorUuid, status: "connected" }, "-created_date", 1);
+      if (conns[0]) fanFilter.creator_profile_id = conns[0].creator_profile_id;
+    }
+    const fans = await base44.asServiceRole.entities.Fan.filter(fanFilter, "-created_date", 5);
+    for (const fan of fans) {
+      await base44.asServiceRole.entities.Fan.update(fan.id, { subscription_status: status });
     }
     await base44.asServiceRole.entities.ActivityLog.create({
       event_type: "fan.status_changed",

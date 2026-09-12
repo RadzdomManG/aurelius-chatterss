@@ -1,4 +1,4 @@
-import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
+import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { getValidAccessToken, getChats, getMessages, getMe, sleep } from "../../shared/fanvue-api.ts";
 
 // Chunk bulk operations to stay under the platform's 500-item limit.
@@ -35,22 +35,17 @@ export default async function(req) {
 
     const { creatorProfileId, fullSync, messagesOnly, maxChatsWithMessages } = parsedBody;
 
-    // Find the FanvueConnection for this creator
-    if (creatorProfileId) {
-      const conns = await base44.entities.FanvueConnection.filter(
-        { creator_profile_id: creatorProfileId },
-        "-created_date",
-        1
-      );
-      connection = conns[0];
-    } else {
-      const conns = await base44.entities.FanvueConnection.filter(
-        { status: "connected" },
-        "-created_date",
-        1
-      );
-      connection = conns[0];
+    // Sync must be creator-scoped — falling back to the first connected
+    // account would sync the WRONG creator's data into this one.
+    if (!creatorProfileId) {
+      return Response.json({ error: "creatorProfileId is required" }, { status: 400 });
     }
+    const conns = await base44.entities.FanvueConnection.filter(
+      { creator_profile_id: creatorProfileId },
+      "-created_date",
+      1
+    );
+    connection = conns[0];
 
     if (!connection) {
       return Response.json({ error: "No connected Fanvue account found" }, { status: 404 });
@@ -71,7 +66,17 @@ export default async function(req) {
 
     const accessToken = await getValidAccessToken(connection, base44);
     const me = await getMe(accessToken);
-    const creatorUuid = me.uuid || me.id || me.user?.uuid;
+    const creatorUuid = me?.uuid || me?.id || me?.user?.uuid;
+    if (!creatorUuid) {
+      await base44.asServiceRole.entities.FanvueConnection.update(connection.id, { sync_status: "error" });
+      await base44.asServiceRole.entities.ActivityLog.create({
+        creator_profile_id: creatorProfileIdFinal,
+        event_type: "sync.error",
+        status: "error",
+        message: "Could not resolve creator UUID from Fanvue /v1/users/me",
+      });
+      return Response.json({ error: "Could not resolve creator UUID" }, { status: 502 });
+    }
 
     // Preload existing data
     const existingFans = await base44.asServiceRole.entities.Fan.filter(
@@ -205,9 +210,10 @@ export default async function(req) {
 
     // === Phase 2: Sync messages (rate-limited, optional) ===
     if (fullSync || messagesOnly) {
-      const maxMessages = maxChatsWithMessages || 20; // cap to avoid timeout
+      const maxMessages = maxChatsWithMessages || 50; // cap to avoid timeout
       const messagesToCreate = [];
       let processed = 0;
+      let messageErrors = 0;
 
       for (const fanUuid of chatFanUuids) {
         if (processed >= maxMessages) break;
@@ -241,6 +247,7 @@ export default async function(req) {
             totalMessages++;
           }
         } catch (msgErr) {
+          messageErrors++;
           console.error(`[sync] messages failed for ${fanUuid}:`, msgErr.message);
         }
         processed++;
@@ -279,9 +286,10 @@ export default async function(req) {
       }
     }
 
-    // Update sync status
+    // Update sync status — mark "error" if any per-chat message fetch failed
+    // so the UI never reports a healthy sync that actually missed threads.
     await base44.asServiceRole.entities.FanvueConnection.update(connection.id, {
-      sync_status: "completed",
+      sync_status: messageErrors > 0 ? "error" : "completed",
       last_sync_at: new Date().toISOString(),
     });
 

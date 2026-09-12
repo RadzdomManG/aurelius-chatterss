@@ -350,10 +350,15 @@ export default function Inbox() {
         setDraft(null);
       }
 
-      if (conv && conv.unread_count > 0) {
-        await base44.entities.Conversation.update(convId, { unread_count: 0 });
-        setConversations((prev) => prev.map((c) => (c.id === convId ? { ...c, unread_count: 0 } : c)));
+      // Clear unread across ALL conversation records for this fan (duplicate
+      // records persist for some fans); the badge otherwise sticks on siblings.
+      for (const cid of convIds) {
+        const c = conversations.find((x) => x.id === cid);
+        if (c && c.unread_count > 0) {
+          await base44.entities.Conversation.update(cid, { unread_count: 0 }).catch(() => {});
+        }
       }
+      setConversations((prev) => prev.map((c) => (convIds.includes(c.id) ? { ...c, unread_count: 0 } : c)));
     } catch (err) {
       console.error("Failed to load messages:", err);
     } finally {
@@ -642,9 +647,15 @@ export default function Inbox() {
   const handleModeChange = async (mode) => {
     if (!selectedId) return;
     try {
-      await base44.entities.Conversation.update(selectedId, { automation_mode_override: mode });
-      setConversations((prev) => prev.map((c) => c.id === selectedId ? { ...c, automation_mode_override: mode } : c));
-      toast.success(`Automation mode: ${mode}`);
+      const override = mode === "inherit" ? null : mode;
+      await base44.entities.Conversation.update(selectedId, { automation_mode_override: override });
+      setConversations((prev) => prev.map((c) => c.id === selectedId ? { ...c, automation_mode_override: override } : c));
+      toast.success(mode === "inherit" ? "Inheriting creator automation mode" : `Automation mode: ${mode}`);
+      // Flush pending/needs-approval jobs for this conversation immediately so
+      // switching to Draft/Auto answers the latest fan message now, not in 5 min.
+      if (mode === "draft" || mode === "full_auto") {
+        base44.functions.invoke("recover-ai-jobs").catch(() => {});
+      }
     } catch (err) {
       toast.error("Failed to update automation mode");
     }

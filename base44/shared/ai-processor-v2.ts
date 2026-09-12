@@ -1,4 +1,4 @@
-import { getValidAccessToken, sendFanvueMessage, getMedia, apiCall } from "./fanvue-api.ts";
+import { getValidAccessToken, sendFanvueMessage, apiCall } from "./fanvue-api.ts";
 import { callGrok } from "./grok-client.ts";
 import { isPaused } from "./app-config.ts";
 
@@ -49,19 +49,10 @@ function validatePpvCents(suggested: number, settings: any): number | null {
   return best;
 }
 
-// ---- 3-strike explicit-request detector ----
-// When a fan asks for explicit content 3+ times, that is a strong buying
-// signal → the AI must send a PPV offer (5 pictures auto-attached) this turn.
-const EXPLICIT_REQUEST_RE = /\b(puss(y|ies)|nude?s?|naked|bare\b|boobs?|tits?|nipples?|clit|vagina|asshole|send(?:ing)?\s+(?:me\s+)?(?:a\s+)?pic(?:ture)?s?|show\s+(?:me\s+)?(?:your\s+)?(?:pussy|body|tits?|boobs?|ass)|see\s+(?:your\s+)?(?:pussy|body|tits?|boobs?|ass|nude?s?)|your\s+body|spread|masturbat\w*|finger(?:ing)?\s+(?:your\s+)?(?:self|pussy)|play\s+with\s+(?:your\s+)?(?:self|pussy)|touch\s+yourself|cum(?:ming)?|horny|xxx|sex\s+tape)\b/i;
-
-function countExplicitRequests(fanMessages: any[]): number {
-  let n = 0;
-  for (const m of fanMessages) {
-    const body = String((m && (m.body || "")) || "").toLowerCase();
-    if (EXPLICIT_REQUEST_RE.test(body)) n++;
-  }
-  return n;
-}
+// NOTE: The hardcoded 3-strike explicit-request detector was removed. The
+// active PersonaProfile is now the SOLE authority over when to offer PPV.
+// A regex-based force-offer overrode the persona, which violated the
+// persona-authority design and caused unsolicited PPV spam.
 
 // ---- SINGLE CANONICAL AUTOMATION MODE RESOLVER ----
 export function resolveAutomationMode(creator: any, conversation: any, settings: any): "STOPPED" | "DRAFT" | "AUTO" {
@@ -193,25 +184,8 @@ function isPpvOfferAllowed(conversation: any, settings: any, recentMsgs: any[]):
   return true;
 }
 
-// ---- Fetch default vault media for PPV locking ----
-async function getDefaultPpvMedia(accessToken: string, settings: any): Promise<string[] | null> {
-  try {
-    // Always attach 5 pictures per PPV offer (requirement). Fetch a larger
-    // page of ready vault media and collect up to 5.
-    const res = await getMedia(accessToken, { size: 30, variants: "thumbnail,main" });
-    const readyItems = (res?.data || []).filter((item: any) => item.uuid);
-    let uuids = readyItems.map((item: any) => item.uuid);
-    // Prioritize the operator-configured default, then pad with vault items
-    if (settings.default_media_uuid) {
-      uuids = [settings.default_media_uuid, ...uuids.filter((u) => u !== settings.default_media_uuid)];
-    }
-    const result = uuids.slice(0, 5);
-    return result.length > 0 ? result : null;
-  } catch (e) {
-    console.error("[ai] Failed to fetch default PPV media:", (e as any).message);
-    return null;
-  }
-}
+// (Removed getDefaultPpvMedia — PPV media now comes exclusively from the
+// AI-chosen curated PpvContentSet, never random vault items.)
 
 // ---- Purchase reconciliation ----
 // Best-effort: match this fan's PPV offers to Fanvue spending insights by
@@ -343,7 +317,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   }
 
   // Load all context in parallel
-  const [creators, personas, fans, memories, recentMsgs, triggerMsgs, latestMsgs, automationSettings, connections, fanMsgsForCount] = await Promise.all([
+  const [creators, personas, fans, memories, recentMsgs, triggerMsgs, latestMsgs, automationSettings, connections] = await Promise.all([
     base44.asServiceRole.entities.CreatorProfile.filter({ id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.PersonaProfile.filter({ creator_profile_id: creatorProfileId, active: true }, "-updated_date", 1),
     base44.asServiceRole.entities.Fan.filter({ id: conversation.fan_id }, "-created_date", 1),
@@ -358,10 +332,6 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, "-created_date", 1),
     base44.asServiceRole.entities.AutomationSettings.filter({ creator_profile_id: creatorProfileId }, "-created_date", 1),
     base44.asServiceRole.entities.FanvueConnection.filter({ creator_profile_id: creatorProfileId, status: "connected" }, "-created_date", 1),
-    // Larger window of FAN-only messages for the 3-strike explicit-request
-    // counter (recentMsgs is capped at 15 and mixes sender types, which can
-    // miss asks spread across a longer thread).
-    base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId, sender_type: "fan" }, "-created_date", 30),
   ]);
 
   const creator = creators[0];
@@ -541,16 +511,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
       ? recentQuestionTexts.map((q: string) => `- ${q}`).join("\n")
       : "(none yet)";
 
-    // 3-strike explicit-request escalation: 3+ explicit asks = strong buying
-    // signal → nudge the AI to offer a PPV this turn. BUT the minimum gap
-    // between offers (ppv_min_minutes_between_offers + min messages) is a
-    // HARD GATE that forcePpv cannot bypass — otherwise once a fan hits 3
-    // explicit asks, EVERY reply sends another PPV and they stack back to
-    // back. The gap is authoritative; the strike count only decides whether
-    // to push an offer when a slot is actually open.
-    const explicitRequestCount = countExplicitRequests(fanMsgsForCount || []);
     const ppvWindowOpen = isPpvOfferAllowed(conversation, settings, recentMsgs);
-    const forcePpv = !!settings.ppv_allowed && explicitRequestCount >= 3 && ppvWindowOpen;
     const ppvAllowed = !!settings.ppv_allowed && ppvWindowOpen;
     const ladderStr = getEnabledLadder(settings).map((c) => `$${c / 100}`).join(", ");
 
@@ -564,7 +525,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     let contentSets: any[] = [];
     let availableSets: any[] = [];
     let setCatalogStr = "(no curated sets available)";
-    if (ppvAllowed || forcePpv) {
+    if (ppvAllowed) {
       const [allSets, sentTracking] = await Promise.all([
         base44.asServiceRole.entities.PpvContentSet.filter({ creator_profile_id: creatorProfileId, active: true }, "created_date", 50),
         base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 50),
@@ -642,7 +603,6 @@ ${bannedQuestionsStr}
 
 SALES CONTEXT:
 ${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — the system sets the price and attaches the locked content automatically.\n- Valid price rungs (internal, never spoken): ${ladderStr}\n- CONTENT SETS (curated locked bundles — choose the ONE that best matches the fan's request and put its id in chosen_set_id; the system attaches its media and sets the price). Match the fan's words to a set's TAGS first, then its DESCRIPTION.\n${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
-${forcePpv ? "\nFORCE PPV THIS TURN: The fan has now asked for explicit content 3+ times — a clear buying signal, and a PPV slot is open. You MUST offer a PPV in the LAST bubble this turn. Follow your persona's tone and style. NEVER mention price, money, or picture counts — the system handles both." : ""}
 
 RECENT CONVERSATION (oldest to newest):
 ${conversationContext || "No prior messages."}
@@ -755,14 +715,6 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       }
     }
 
-    // === 3-STRIKE FORCED PPV FALLBACK ===
-    // If the fan asked for explicit content 3+ times but the AI still didn't
-    // return a price, guarantee a PPV goes out using the default/lowest rung.
-    if (forcePpv && !ppvCents) {
-      const fallbackCents = settings.default_ppv_cents || getEnabledLadder(settings)[0];
-      ppvCents = validatePpvCents(fallbackCents, settings);
-    }
-
     // === RATE LIMIT CHECK ===
     let rateLimited = false;
     if (settings.max_replies_per_hour) {
@@ -798,7 +750,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
 
       // === SEND-TIME COOLDOWN RE-CHECK (backstop for concurrent jobs) ===
       // A parallel job on this conversation may have just sent a PPV and
-      // stamped last_ppv_offer_at after we evaluated forcePpv/ppvAllowed.
+      // stamped last_ppv_offer_at after we evaluated ppvAllowed.
       // Re-fetch the conversation fresh; if we're still inside the mandatory
       // 10-minute window, drop this PPV and send a plain conversational reply
       // so the fan keeps chatting but never gets back-to-back PPV offers.
@@ -828,7 +780,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       if (ppvCents && ppvCents > 0) {
         // Use the AI-chosen set, or fall back to the first available set if the
         // AI offered a PPV but didn't pick one (e.g. 3-strike force path).
-        const setToAttach = chosenSet || (availableSets.length > 0 ? availableSets[0] : null);
+        const setToAttach = chosenSet || null;
         if (setToAttach && Array.isArray(setToAttach.media_uuids) && setToAttach.media_uuids.length > 0) {
           attachedMediaUuids = setToAttach.media_uuids.slice(0, 5);
           chosenSetId = setToAttach.id;

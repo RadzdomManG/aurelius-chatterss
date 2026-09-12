@@ -31,6 +31,7 @@ export default function Automation() {
   }, [selectedCreatorId]);
 
   const loadData = async () => {
+    if (!selectedCreatorId) { setJobs([]); setScheduled([]); setLoading(false); return; }
     try {
       const [jobList, schedList] = await Promise.all([
         selectedCreatorId
@@ -94,6 +95,8 @@ export default function Automation() {
 
         {loading ? (
           <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-lg bg-muted" />)}</div>
+        ) : !selectedCreatorId ? (
+          <EmptyState icon={Bot} title="No creator selected" description="Select a creator at the top to view its automation queue, failed jobs, and scheduled actions." />
         ) : tab === "queue" ? (
           <JobList jobs={[...pending, ...processing, ...needsApproval]} emptyIcon={Clock} onRetry={handleRetry} />
         ) : tab === "failed" ? (

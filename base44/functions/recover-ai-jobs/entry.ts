@@ -169,7 +169,7 @@ export default async function (req: Request): Promise<Response> {
         }
       }
       for (const [, fanMsg] of Object.entries(newestPerConv)) {
-        if (backfilled >= 25) break;
+        if (backfilled >= 100) break;
         const triggerUuid = fanMsg.external_uuid || fanMsg.id;
         if (existingJobTriggers.has(triggerUuid)) { backfillSkipped++; continue; }
         const replies = answeredByConv[fanMsg.conversation_id] || [];

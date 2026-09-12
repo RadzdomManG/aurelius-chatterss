@@ -32,6 +32,8 @@ export default async function (req: Request): Promise<Response> {
     const base44 = createClientFromRequest(req);
     const body = await req.json();
     const { action, code, state, redirectUri } = body;
+    let authUser: any = null;
+    try { authUser = await base44.auth.me(); } catch (e) {}
 
     // --- INITIATE: build the OAuth authorization URL server-side ---
     if (action === "initiate") {
@@ -112,6 +114,7 @@ export default async function (req: Request): Promise<Response> {
           display_name: creatorName || creatorProfile.display_name,
           username: creatorHandle || creatorProfile.username,
           status: "active",
+          ...(authUser?.data?.organization_id ? { organization_id: authUser.data.organization_id } : {}),
         });
       } else {
         creatorProfile = await base44.asServiceRole.entities.CreatorProfile.create({
@@ -121,6 +124,7 @@ export default async function (req: Request): Promise<Response> {
           timezone: "UTC",
           automation_mode: "off",
           status: "active",
+          organization_id: authUser?.data?.organization_id || undefined,
         });
       }
 
@@ -163,9 +167,45 @@ export default async function (req: Request): Promise<Response> {
         metadata: { scopes, creatorUuid },
       });
 
-      // Trigger a background sync after connection
+      // Bootstrap per-creator defaults so a newly connected account is usable
+      // immediately: an AutomationSettings record (PPV on, full ladder) and a
+      // placeholder persona. Without these the AI skips every job
+      // (PERSONA_NOT_FOUND) and PPV never fires (settings missing) — the root
+      // cause of a 2nd connected account having "no inbox/automation/content".
       try {
-        await base44.asServiceRole.functions.invoke("fanvue-sync", { creatorProfileId: creatorProfile.id, fullSync: false });
+        const existingSettings = await base44.asServiceRole.entities.AutomationSettings.filter({ creator_profile_id: creatorProfile.id }, "-created_date", 1);
+        if (!existingSettings[0]) {
+          await base44.asServiceRole.entities.AutomationSettings.create({
+            creator_profile_id: creatorProfile.id,
+            organization_id: authUser?.data?.organization_id || undefined,
+            enabled: true,
+            approval_required: true,
+            ppv_allowed: true,
+            max_ppv_cents: 40000,
+            default_ppv_cents: 1200,
+            ppv_ladder_enabled: [1000, 1200, 1500, 2500, 5000, 10000, 20000, 30000, 40000],
+            ppv_min_messages_between_offers: 5,
+            ppv_min_minutes_between_offers: 10,
+          });
+        }
+      } catch (e) {}
+      try {
+        const existingPersonas = await base44.asServiceRole.entities.PersonaProfile.filter({ creator_profile_id: creatorProfile.id }, "-created_date", 1);
+        if (!existingPersonas[0]) {
+          await base44.asServiceRole.entities.PersonaProfile.create({
+            creator_profile_id: creatorProfile.id,
+            organization_id: authUser?.data?.organization_id || undefined,
+            display_name: `${creatorName || creatorProfile.display_name} Default`,
+            instructions: `You are ${creatorName || creatorProfile.display_name}, a Fanvue creator. Be warm, flirty, and engaging. Reply in 1-3 short chat bubbles. Tease content and offer PPV naturally when the fan shows interest. Never mention price, money, or picture counts — the system handles pricing and locked content silently. Stay fully in character at all times.`,
+            active: true,
+          });
+        }
+      } catch (e) {}
+
+      // Trigger a FULL background sync after connection so the inbox actually
+      // populates (shallow sync left 2nd accounts with chats but no messages).
+      try {
+        await base44.asServiceRole.functions.invoke("fanvue-sync", { creatorProfileId: creatorProfile.id, fullSync: true });
       } catch (e) {}
 
       return Response.json({
