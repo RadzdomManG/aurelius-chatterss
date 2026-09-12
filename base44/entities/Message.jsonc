@@ -39,7 +39,8 @@
         "manual",
         "ai",
         "sync",
-        "webhook"
+        "webhook",
+        "ai_presence_greet"
       ],
       "default": "fanvue"
     },
@@ -51,6 +52,22 @@
         "failed"
       ],
       "default": "sent"
+    },
+    "unsend_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "sent",
+        "unsent",
+        "cancelled"
+      ],
+      "default": "sent",
+      "description": "Lifecycle of an auto-unsendable message. 'pending' = waiting for the 30-min unsend window; 'cancelled' = fan replied/read so unsend was aborted; 'unsent' = successfully deleted on Fanvue; 'sent' = normal message, never unsendable."
+    },
+    "pending_unsend_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this message should be unsent (deleted on Fanvue) if the fan hasn't replied. Only set on ai_presence_greet messages."
     },
     "fanvue_created_at": {
       "type": "string",

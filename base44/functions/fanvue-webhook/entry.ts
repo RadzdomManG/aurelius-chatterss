@@ -14,6 +14,7 @@ import { secrets, waitUntil } from "base44:runtime";
 import { ingestIncomingFanMessage } from "../../shared/ingest-message.ts";
 // AI processing runs synchronously within this request via process-ai-job (canonical ai-processor-v2).
 import { getValidAccessToken, getChatForFan } from "../../shared/fanvue-api.ts";
+import { handlePresenceOnline, handlePresenceOffline, cancelPendingUnsendForConversation } from "../../shared/presence-greet.ts";
 
 const TOLERANCE_SECONDS = 300;
 
@@ -238,6 +239,9 @@ async function processMessageRead(base44: any, event: any) {
         if (c.unread_count > 0) {
           await base44.asServiceRole.entities.Conversation.update(c.id, { unread_count: 0 });
         }
+        // Fan opened the chat and saw it — cancel any pending presence-greet
+        // unsend so we never delete a message they've already read.
+        await cancelPendingUnsendForConversation(base44, c.id);
       }
     }
   } catch (e) {}
@@ -270,14 +274,48 @@ async function processFanStatusChanged(base44: any, event: any) {
 async function processFanPresenceChanged(base44: any, event: any) {
   const data = event.data || event;
   const fanUuid = data.fan?.uuid || data.user?.uuid || data.uuid;
-  const presence = data.presence || data.status;
+  const creatorUuid = data.creator?.uuid;
+  const presence = String(data.presence || data.status || "").toLowerCase();
+  if (!fanUuid) return;
+
+  // Resolve the creator this fan belongs to so the greet is scoped correctly.
+  let creatorProfileId: string | null = null;
+  if (creatorUuid) {
+    try {
+      const conns = await base44.asServiceRole.entities.FanvueConnection.filter({ external_user_uuid: creatorUuid, status: "connected" }, "-created_date", 1);
+      if (conns[0]) creatorProfileId = conns[0].creator_profile_id;
+    } catch (e) {}
+  }
+  if (!creatorProfileId) {
+    try {
+      const fans = await base44.asServiceRole.entities.Fan.filter({ external_uuid: fanUuid }, "-created_date", 1);
+      if (fans[0]) creatorProfileId = fans[0].creator_profile_id;
+    } catch (e) {}
+  }
+
   try {
     await base44.asServiceRole.entities.ActivityLog.create({
       event_type: "fan.presence_changed",
       status: "info",
       message: `Fan ${fanUuid} presence: ${presence || "unknown"}`,
+      metadata: { presence, creatorProfileId },
     });
   } catch (e) {}
+
+  if (!creatorProfileId) return;
+
+  if (presence === "online") {
+    // Fan came online — fire the auto-greet (full_auto gate + cooldown inside).
+    try {
+      await handlePresenceOnline(base44, { creatorProfileId, fanUuid });
+    } catch (e: any) {
+      console.error("[webhook] presence greet failed:", e.message);
+    }
+  } else if (presence === "offline") {
+    try {
+      await handlePresenceOffline(base44, { creatorProfileId, fanUuid });
+    } catch (e: any) {}
+  }
 }
 
 export default async function (req: Request): Promise<Response> {

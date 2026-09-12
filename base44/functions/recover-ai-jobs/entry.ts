@@ -12,6 +12,7 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor-v2.ts";
 import { isPaused } from "../../shared/app-config.ts";
 import { getValidAccessToken } from "../../shared/fanvue-api.ts";
+import { sweepPendingUnsends } from "../../shared/presence-greet.ts";
 // Uses the canonical ai-processor-v2 (no false supersession cancellation).
 
 const STUCK_MS = 2 * 60 * 1000;
@@ -26,7 +27,7 @@ export default async function (req: Request): Promise<Response> {
     return Response.json({ success: true, paused: true, skipped: true });
   }
 
-  let recovered = 0, failed = 0, pendingRecovered = 0, duplicatesCancelled = 0, needsApprovalConverted = 0, msgDeduped = 0, backfilled = 0, backfillSkipped = 0;
+  let recovered = 0, failed = 0, pendingRecovered = 0, duplicatesCancelled = 0, needsApprovalConverted = 0, msgDeduped = 0, backfilled = 0, backfillSkipped = 0, greetsUnsent = 0, greetUnsendsFailed = 0;
 
   // === 1. Cancel duplicate jobs (same trigger_message_uuid) ===
   const allJobs = await base44.asServiceRole.entities.AIJob.list("-created_date", 500);
@@ -224,11 +225,20 @@ export default async function (req: Request): Promise<Response> {
     console.error("[recover] backfill pass failed:", (err as any).message);
   }
 
+  // === 7. Unsend presence greets that went unanswered past their 30-min window ===
+  try {
+    const sweep = await sweepPendingUnsends(base44);
+    greetsUnsent = sweep.unsent;
+    greetUnsendsFailed = sweep.failed;
+  } catch (e: any) {
+    console.error("[recover] presence-greet unsend sweep failed:", e.message);
+  }
+
   await base44.asServiceRole.entities.ActivityLog.create({
     event_type: "runner.recovery",
     status: failed > 0 ? "warning" : "success",
-    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${backfilled} backfilled, ${deadLettered} dead-lettered, ${failed} failed`,
-    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, backfilled, backfillSkipped, deadLettered, failed, stuckFound: stuckToRecover.length },
+    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${backfilled} backfilled, ${deadLettered} dead-lettered, ${greetsUnsent} greets unsent, ${failed} failed`,
+    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, backfilled, backfillSkipped, deadLettered, greetsUnsent, greetUnsendsFailed, failed, stuckFound: stuckToRecover.length },
   });
 
   return Response.json({

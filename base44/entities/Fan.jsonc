@@ -38,6 +38,24 @@
     "total_spent_cents": {
       "type": "integer",
       "default": 0
+    },
+    "online_status": {
+      "type": "string",
+      "enum": [
+        "online",
+        "offline"
+      ],
+      "description": "Live presence from the creator.fan.presence_changed webhook"
+    },
+    "last_online_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time this fan was detected online"
+    },
+    "last_presence_greet_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time the bot auto-greeted this fan on presence \u2014 enforces the per-fan cooldown"
     }
   },
   "required": [

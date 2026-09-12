@@ -7,6 +7,7 @@
 // This is the SINGLE entry point for all incoming fan messages. Never scatter
 // this logic across multiple paths.
 import { isPaused } from "./app-config.ts";
+import { cancelPendingUnsendForConversation } from "./presence-greet.ts";
 
 export async function ingestIncomingFanMessage(
   base44: any,
@@ -143,6 +144,12 @@ export async function ingestIncomingFanMessage(
     last_message_preview: preview,
     last_sender_type: senderType,
   });
+
+  // Fan replied → abort any pending presence-greet unsend for this conversation.
+  // The fan engaged, so the auto-greet must stay (never be deleted).
+  if (!isOutbound) {
+    try { await cancelPendingUnsendForConversation(base44, conversation.id); } catch (e) {}
+  }
 
   // 6. Log activity
   await base44.asServiceRole.entities.ActivityLog.create({
