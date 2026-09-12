@@ -65,6 +65,16 @@
       "type": "integer",
       "default": 10
     },
+    "ppv_warmup_messages": {
+      "type": "integer",
+      "default": 3,
+      "description": "Minimum number of messages in a conversation before any PPV offer is allowed (rapport floor)"
+    },
+    "ppv_reoffer_days": {
+      "type": "integer",
+      "default": 2,
+      "description": "Days to wait before re-offering an unpurchased content set to the same fan"
+    },
     "reengagement_enabled": {
       "type": "boolean",
       "default": false
@@ -105,6 +115,16 @@
     "runner_errors": {
       "type": "integer",
       "default": 0
+    },
+    "consecutive_send_failures": {
+      "type": "integer",
+      "default": 0,
+      "description": "Running count of consecutive Fanvue send failures; reset to 0 on a successful send. Trips the circuit breaker at circuit_breaker_threshold."
+    },
+    "circuit_breaker_threshold": {
+      "type": "integer",
+      "default": 5,
+      "description": "Consecutive send failures before the creator is auto-paused for safety"
     }
   },
   "required": [

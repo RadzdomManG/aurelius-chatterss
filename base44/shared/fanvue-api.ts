@@ -126,6 +126,40 @@ export async function getChatForFan(accessToken, fanUuid) {
   return res?.data?.[0]?.user || null;
 }
 
+/**
+ * Attempt to delete/unsend a chat message on Fanvue.
+ *
+ * UNCONFIRMED CAPABILITY: the Fanvue API may not expose a message-delete
+ * endpoint. This helper issues a best-effort DELETE and returns the result
+ * so callers can detect support at runtime. Item 15 (online-presence
+ * auto-message + unsend) is BLOCKED until this is confirmed working.
+ *
+ * Returns { ok: true, result } on success, or { ok: false, status, body }
+ * so the caller can distinguish "unsupported" from a real failure.
+ */
+export async function deleteMessage(accessToken, userUuid, messageUuid) {
+  try {
+    const res = await fetch(`${API_BASE}/v1/chats/${userUuid}/messages/${messageUuid}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "X-Fanvue-API-Version": API_VERSION,
+        "Content-Type": "application/json",
+      },
+    });
+    if (res.ok) {
+      let result: any = null;
+      try { result = await res.json(); } catch (e) {}
+      return { ok: true, result, status: res.status };
+    }
+    let body = "";
+    try { body = await res.text(); } catch (e) {}
+    return { ok: false, status: res.status, body };
+  } catch (err) {
+    return { ok: false, status: 0, body: (err as any).message };
+  }
+}
+
 export async function exchangeCodeForTokens(code, redirectUri, codeVerifier) {
   const res = await fetch(TOKEN_URL, {
     method: "POST",

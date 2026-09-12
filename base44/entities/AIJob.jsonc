@@ -22,7 +22,8 @@
         "completed",
         "failed",
         "cancelled",
-        "needs_approval"
+        "needs_approval",
+        "dead_letter"
       ],
       "default": "pending"
     },
@@ -43,6 +44,10 @@
     },
     "last_error": {
       "type": "string"
+    },
+    "error_code": {
+      "type": "string",
+      "description": "Structured error code from the error catalog (e.g. FANVUE_SEND_FAILED)"
     },
     "reply_text": {
       "type": "string"

@@ -89,6 +89,12 @@ export default function Diagnostics() {
   const signaturePresent = latestRequest?.metadata?.signaturePresent;
   const lastDelivery = logs[0];
 
+  // Item 5 — health-check signals
+  const sigFailures = logs.filter((l) => l.event_type === "webhook.signature_failed");
+  const tokenExpiry = connection?.access_token_expires_at ? new Date(connection.access_token_expires_at) : null;
+  const tokenMinsLeft = tokenExpiry ? Math.round((tokenExpiry.getTime() - Date.now()) / 60000) : null;
+  const tokenStatus = tokenMinsLeft == null ? "unknown" : tokenMinsLeft < 0 ? "expired" : tokenMinsLeft < 10 ? "expiring" : "ok";
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <div className="mb-6 flex items-center justify-between">
@@ -109,12 +115,13 @@ export default function Diagnostics() {
         <HealthCard
           icon={Plug}
           title="Fanvue Connection"
-          status={connection?.status || "none"}
+          status={connection?.status === "connected" ? (tokenStatus === "expired" || tokenStatus === "expiring" ? tokenStatus : "ok") : connection?.status || "none"}
           rows={[
             ["Status", connection?.status || "Not connected"],
             ["Sync", connection?.sync_status || "—"],
             ["Last sync", connection?.last_sync_at ? new Date(connection.last_sync_at).toLocaleString() : "Never"],
             ["Creator", creator?.display_name || "—"],
+            ["Token", tokenMinsLeft == null ? "—" : tokenMinsLeft < 0 ? `Expired ${-tokenMinsLeft}m ago` : `${tokenMinsLeft}m left`],
           ]}
         />
         <HealthCard
@@ -125,6 +132,7 @@ export default function Diagnostics() {
             ["URL", WEBHOOK_URL.replace("https://", "")],
             ["Last event", lastDelivery ? new Date(lastDelivery.created_date).toLocaleTimeString() : "None"],
             ["Signature", signaturePresent === undefined ? "No requests yet" : signaturePresent ? "Present ✓" : "MISSING ✗"],
+            ["Sig failures", String(sigFailures.length)],
           ]}
           footer={
             <button
@@ -158,6 +166,19 @@ export default function Diagnostics() {
           }
         />
       </div>
+
+      {/* Signature failure alert — surfaces when verification fails repeatedly */}
+      {sigFailures.length > 0 && (
+        <div className="mt-6 flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <div>
+            <p className="font-medium text-destructive">{sigFailures.length} webhook signature failure{sigFailures.length > 1 ? "s" : ""} detected</p>
+            <p className="text-destructive/80">
+              The Fanvue webhook secret may have rotated. Verify the signing secret in the Fanvue Developer Area matches the secret configured for this app, then re-test.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Setup checklist */}
       <div className="mt-6 rounded-lg border border-border bg-card p-5">

@@ -1,6 +1,7 @@
 import { getValidAccessToken, sendFanvueMessage, apiCall } from "./fanvue-api.ts";
 import { callGrok } from "./grok-client.ts";
 import { isPaused } from "./app-config.ts";
+import { toCode } from "./error-catalog.ts";
 
 /**
  * Server-side AI processor — the single canonical automation engine.
@@ -298,6 +299,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
           locked_at: null,
           locked_by: null,
           last_error: reason,
+          error_code: toCode(reason),
         });
       } catch (e) {
         console.error("[ai] Failed to finalize skipped job:", jobId, reason, (e as any).message);
@@ -359,6 +361,19 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     try { await base44.asServiceRole.entities.AutomationSettings.update(settings.id, { enabled: true }); } catch (e) {}
   }
   if (autoMode === "STOPPED") return await skipJob("AUTOMATION_STOPPED");
+
+  // === CIRCUIT BREAKER ===
+  // If this creator has accumulated too many consecutive send failures, stop
+  // processing new jobs for it until the operator investigates. The counter is
+  // reset to 0 on the first successful send (below) and bumped in the catch.
+  const cbThreshold = settings?.circuit_breaker_threshold ?? 5;
+  if (settings?.id && (settings.consecutive_send_failures || 0) >= cbThreshold) {
+    try {
+      await base44.asServiceRole.entities.CreatorProfile.update(creatorProfileId, { status: "error" });
+    } catch (e) {}
+    return await skipJob("CIRCUIT_BREAKER_TRIPPED");
+  }
+
   if (!persona) return await skipJob("PERSONA_NOT_FOUND");
   if (!connection) return await skipJob("FANVUE_CONTACTABILITY");
   if (fan?.automation_paused) return await skipJob("FAN_PAUSED");
@@ -452,6 +467,11 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     const claimOps = { $set: { status: "processing", locked_at: now, locked_by: claimBy, stage: "ingested", ai_started_at: now, last_error: null } };
     await base44.asServiceRole.entities.AIJob.updateMany({ id: job.id, status: "pending" }, claimOps);
     await base44.asServiceRole.entities.AIJob.updateMany({ id: job.id, status: "processing", locked_at: null }, claimOps);
+    // Allow retry of failed / dead-letter jobs from the inbox — process-ai-job
+    // is the single retry entry point; accepting these statuses lets the
+    // operator's "Retry" button re-claim and re-run a dead job.
+    await base44.asServiceRole.entities.AIJob.updateMany({ id: job.id, status: "failed" }, claimOps);
+    await base44.asServiceRole.entities.AIJob.updateMany({ id: job.id, status: "dead_letter" }, claimOps);
     const claimed = await base44.asServiceRole.entities.AIJob.get(job.id);
     if (!claimed || claimed.locked_by !== claimBy) {
       // Another caller already owns this job — let it finish.
@@ -887,6 +907,13 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
       });
 
+      // Successful send — reset the circuit breaker counter for this creator.
+      if (settings?.id && (settings.consecutive_send_failures || 0) > 0) {
+        try {
+          await base44.asServiceRole.entities.AutomationSettings.update(settings.id, { consecutive_send_failures: 0 });
+        } catch (e) {}
+      }
+
       return { success: true, action: "auto_sent", jobId: job.id, bubbles: replies.length };
     } else {
       // DRAFT mode: always store for approval. Carry the chosen set + media so
@@ -915,9 +942,37 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       return { success: true, action: "needs_approval", jobId: job.id };
     }
   } catch (error) {
+    const errMsg = (error as any).message || "UNKNOWN";
+    // Classify via the error catalog so the UI can show an actionable code.
+    const code = toCode(errMsg);
+
+    // === CIRCUIT BREAKER: bump on send-class failures ===
+    // Only count Fanvue send / rate-limit / auth failures toward the breaker —
+    // AI-generation failures don't indicate the Fanvue channel is unhealthy.
+    const isSendFailure = /send|rate.?limit|429|token|expired|401|unauthorized|fanvue api/i.test(errMsg);
+    if (isSendFailure && settings?.id) {
+      try {
+        const newCount = (settings.consecutive_send_failures || 0) + 1;
+        const threshold = settings.circuit_breaker_threshold ?? 5;
+        await base44.asServiceRole.entities.AutomationSettings.update(settings.id, { consecutive_send_failures: newCount });
+        if (newCount >= threshold) {
+          await base44.asServiceRole.entities.CreatorProfile.update(creatorProfileId, { status: "error" });
+          await base44.asServiceRole.entities.ActivityLog.create({
+            creator_profile_id: creatorProfileId,
+            conversation_id: conversationId,
+            event_type: "ai.circuit_breaker",
+            status: "error",
+            message: `Circuit breaker tripped after ${newCount} consecutive send failures — creator auto-paused`,
+            metadata: { job_id: job.id, threshold },
+          });
+        }
+      } catch (e) {}
+    }
+
     await base44.asServiceRole.entities.AIJob.update(job.id, {
       status: "failed",
-      last_error: (error as any).message,
+      last_error: errMsg,
+      error_code: code,
       attempts: (job.attempts || 0) + 1,
     });
 
@@ -926,7 +981,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       conversation_id: conversationId,
       event_type: "ai.failed",
       status: "error",
-      message: (error as any).message,
+      message: errMsg,
     });
 
     throw error;

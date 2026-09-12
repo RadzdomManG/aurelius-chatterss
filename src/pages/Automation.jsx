@@ -1,7 +1,7 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
-import { Bot, Clock, AlertTriangle, Send, ListChecks, RotateCcw, MessageSquare, Zap } from "lucide-react";
+import { Bot, Clock, AlertTriangle, Send, ListChecks, RotateCcw, MessageSquare, Zap, Archive } from "lucide-react";
 import MassMessaging from "@/components/automation/MassMessaging";
 import RulesManager from "@/components/automation/RulesManager";
 import AutomationModeHeader from "@/components/automation/AutomationModeHeader";
@@ -12,6 +12,7 @@ import { useCreator } from "@/lib/creator-context";
 const TABS = [
   { id: "queue", label: "Queue", icon: Clock },
   { id: "failed", label: "Failed Jobs", icon: AlertTriangle },
+  { id: "dead", label: "Dead Letter", icon: Archive },
   { id: "scheduled", label: "Scheduled", icon: Send },
   { id: "mass", label: "Mass Messaging", icon: Send },
   { id: "rules", label: "Rules", icon: Zap },
@@ -52,6 +53,8 @@ export default function Automation() {
       await base44.entities.AIJob.update(jobId, { status: "pending", last_error: null, attempts: 0, locked_at: null, locked_by: null });
       toast.success("Job queued for retry");
       loadData();
+      // Kick processing immediately so the retry doesn't wait for the watchdog.
+      base44.functions.invoke("process-ai-job", { jobId }).catch(() => {});
     } catch (err) {
       toast.error("Failed to retry job");
     }
@@ -62,6 +65,7 @@ export default function Automation() {
   const failed = jobs.filter((j) => j.status === "failed");
   const completed = jobs.filter((j) => j.status === "completed");
   const needsApproval = jobs.filter((j) => j.status === "needs_approval");
+  const deadLetter = jobs.filter((j) => j.status === "dead_letter");
 
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
@@ -72,12 +76,13 @@ export default function Automation() {
         <AutomationModeHeader />
 
         {/* Stats */}
-        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
+        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-6">
           <StatCard label="Pending" value={pending.length} variant="info" />
           <StatCard label="Processing" value={processing.length} variant="warning" />
           <StatCard label="Needs Approval" value={needsApproval.length} variant="warning" />
           <StatCard label="Completed" value={completed.length} variant="success" />
           <StatCard label="Failed" value={failed.length} variant="error" />
+          <StatCard label="Dead Letter" value={deadLetter.length} variant="error" />
         </div>
 
         {/* Tabs */}
@@ -101,6 +106,8 @@ export default function Automation() {
           <JobList jobs={[...pending, ...processing, ...needsApproval]} emptyIcon={Clock} onRetry={handleRetry} />
         ) : tab === "failed" ? (
           <JobList jobs={failed} emptyIcon={AlertTriangle} onRetry={handleRetry} showRetry />
+        ) : tab === "dead" ? (
+          <JobList jobs={deadLetter} emptyIcon={Archive} onRetry={handleRetry} showRetry />
         ) : tab === "scheduled" ? (
           <ScheduledList items={scheduled} />
         ) : tab === "mass" ? (

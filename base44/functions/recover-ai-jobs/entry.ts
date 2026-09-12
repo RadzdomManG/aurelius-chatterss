@@ -11,6 +11,7 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor-v2.ts";
 import { isPaused } from "../../shared/app-config.ts";
+import { getValidAccessToken } from "../../shared/fanvue-api.ts";
 // Uses the canonical ai-processor-v2 (no false supersession cancellation).
 
 const STUCK_MS = 2 * 60 * 1000;
@@ -52,6 +53,34 @@ export default async function (req: Request): Promise<Response> {
       } catch (e) {}
     }
   }
+
+  // === 1b. Token-expiry watchdog — pre-refresh access tokens nearing expiry ===
+  // Avoids mid-conversation 401s by refreshing any connected token that expires
+  // within the next 10 minutes. getValidAccessToken no-ops if still valid.
+  try {
+    const connections = await base44.asServiceRole.entities.FanvueConnection.filter({ status: "connected" }, "-created_date", 50);
+    const tenMin = Date.now() + 10 * 60 * 1000;
+    for (const conn of connections) {
+      const expiresAt = conn.access_token_expires_at ? new Date(conn.access_token_expires_at).getTime() : 0;
+      if (!expiresAt || expiresAt < tenMin) {
+        try { await getValidAccessToken(conn, base44); } catch (e) { console.error("[recover] token refresh", conn.id, (e as any).message); }
+      }
+    }
+  } catch (e) {}
+
+  // === 1c. Promote permanently-failed jobs to dead_letter ===
+  // Jobs that have failed repeatedly (>= 5 attempts) are moved to a dead-letter
+  // status so they stop being retried by the watchdog and surface in the UI
+  // for manual investigation / operator-initiated retry.
+  let deadLettered = 0;
+  try {
+    const failedJobs = await base44.asServiceRole.entities.AIJob.filter({ status: "failed" }, "-created_date", 100);
+    for (const j of failedJobs) {
+      if ((j.attempts || 0) >= 5) {
+        try { await base44.asServiceRole.entities.AIJob.update(j.id, { status: "dead_letter" }); deadLettered++; } catch (e) {}
+      }
+    }
+  } catch (e) {}
 
   // === 2. Recover stuck "processing" jobs ===
   const cutoff = new Date(Date.now() - STUCK_MS).toISOString();
@@ -198,8 +227,8 @@ export default async function (req: Request): Promise<Response> {
   await base44.asServiceRole.entities.ActivityLog.create({
     event_type: "runner.recovery",
     status: failed > 0 ? "warning" : "success",
-    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${backfilled} backfilled, ${failed} failed`,
-    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, backfilled, backfillSkipped, failed, stuckFound: stuckToRecover.length },
+    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${backfilled} backfilled, ${deadLettered} dead-lettered, ${failed} failed`,
+    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, backfilled, backfillSkipped, deadLettered, failed, stuckFound: stuckToRecover.length },
   });
 
   return Response.json({
@@ -211,6 +240,7 @@ export default async function (req: Request): Promise<Response> {
     msgDeduped,
     backfilled,
     backfillSkipped,
+    deadLettered,
     failed,
     stuckFound: stuckToRecover.length,
   });
