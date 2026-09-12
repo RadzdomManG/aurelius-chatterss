@@ -98,14 +98,16 @@ export default async function (req: Request): Promise<Response> {
     const snapshot = (config?.paused_modes || {}) as Record<string, string>;
     // The snapshot was captured at pause time and can go stale if the operator
     // manually set a creator to draft/full_auto while the system was paused.
-    // Load live records once and prefer the MORE active mode so Resume All
-    // never downgrades a creator the operator intentionally left running.
-    const liveCreators = await base44.asServiceRole.entities.CreatorProfile.list("-created_date", 200);
-    const liveMode = new Map<string, string>(liveCreators.map((c: any) => [c.id, c.automation_mode || "off"]));
+    // Read each creator's live mode individually and prefer the MORE active
+    // mode so Resume All never downgrades a creator the operator left running.
     let restored = 0;
     let kept = 0;
     for (const [creatorId, mode] of Object.entries(snapshot)) {
-      const live = liveMode.get(creatorId);
+      let live = "off";
+      try {
+        const c = await base44.asServiceRole.entities.CreatorProfile.get(creatorId);
+        live = (c?.automation_mode as string) || "off";
+      } catch (e) {}
       const final = live === "draft" || live === "full_auto" ? live : mode;
       if (live === "draft" || live === "full_auto") kept++;
       try {
