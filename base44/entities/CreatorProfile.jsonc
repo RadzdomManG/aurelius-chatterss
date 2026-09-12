@@ -30,6 +30,14 @@
       ],
       "default": "off"
     },
+    "prior_automation_mode": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "full_auto"
+      ],
+      "description": "Mode the creator was in before a per-creator pause; restored on resume."
+    },
     "status": {
       "type": "string",
       "enum": [

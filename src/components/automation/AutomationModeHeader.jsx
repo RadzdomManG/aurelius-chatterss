@@ -62,24 +62,31 @@ export default function AutomationModeHeader() {
     }
   };
 
-  // Per-creator pause/resume: toggles THIS creator's bot between off and its
-  // last non-off mode, independent of the global Pause All. "Pause" sets the
-  // creator to off; "Resume" restores full_auto (or draft if that was the
-  // prior mode tracked in AutomationSettings.runner_status).
+  // Per-creator pause/resume: "Pause" snapshots the current mode into
+  // prior_automation_mode then sets off; "Resume" restores that saved mode
+  // (falling back to full_auto) and clears the snapshot — mirroring how the
+  // global Resume All restores from AppConfig.paused_modes.
   const handleCreatorPauseResume = async () => {
     if (!selectedCreator) return;
     const currentMode = selectedCreator.automation_mode || "off";
     setSaving(true);
     try {
       if (currentMode === "off") {
-        // Resume this creator — default to full_auto.
-        await base44.entities.CreatorProfile.update(selectedCreator.id, { automation_mode: "full_auto" });
-        setCreators((prev) => prev.map((c) => (c.id === selectedCreator.id ? { ...c, automation_mode: "full_auto" } : c)));
-        toast.success(`${selectedCreator.display_name}: bot resumed (Running)`);
+        const restoreMode = selectedCreator.prior_automation_mode === "draft" || selectedCreator.prior_automation_mode === "full_auto"
+          ? selectedCreator.prior_automation_mode
+          : "full_auto";
+        await base44.entities.CreatorProfile.update(selectedCreator.id, {
+          automation_mode: restoreMode,
+          prior_automation_mode: null,
+        });
+        setCreators((prev) => prev.map((c) => (c.id === selectedCreator.id ? { ...c, automation_mode: restoreMode, prior_automation_mode: null } : c)));
+        toast.success(`${selectedCreator.display_name}: bot resumed (${MODES.find((m) => m.id === restoreMode).label})`);
       } else {
-        // Pause this creator — set to off.
-        await base44.entities.CreatorProfile.update(selectedCreator.id, { automation_mode: "off" });
-        setCreators((prev) => prev.map((c) => (c.id === selectedCreator.id ? { ...c, automation_mode: "off" } : c)));
+        await base44.entities.CreatorProfile.update(selectedCreator.id, {
+          automation_mode: "off",
+          prior_automation_mode: currentMode,
+        });
+        setCreators((prev) => prev.map((c) => (c.id === selectedCreator.id ? { ...c, automation_mode: "off", prior_automation_mode: currentMode } : c)));
         toast.success(`${selectedCreator.display_name}: bot paused (Stopped)`);
       }
     } catch (e) {
