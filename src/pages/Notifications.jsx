@@ -23,7 +23,10 @@ export default function Notifications() {
       try {
         setLoading(true);
         const res = await fanvueCall("listNotifications", { query: { limit: 50 } });
-        setItems(res?.data?.data || []);
+        // Coerce to a real array — Fanvue can return a wrapped/paginated
+        // object here, and `|| []` won't catch a truthy non-array (crashes map).
+        const list = res?.data?.data;
+        setItems(Array.isArray(list) ? list : Array.isArray(res?.data) ? res.data : []);
       } catch (e) {
         if (e?.code !== "MISSING_SCOPE") toast.error(e?.error || "Failed to load notifications");
       } finally {
