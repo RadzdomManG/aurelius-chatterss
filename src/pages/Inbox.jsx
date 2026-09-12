@@ -72,7 +72,7 @@ export default function Inbox() {
       setLoadingConvos(true);
       // Use allSettled so one failed fetch doesn't blank the whole inbox.
       const settled = await Promise.allSettled([
-        base44.entities.Conversation.list("-last_message_at", 100),
+        base44.entities.Conversation.list("-last_message_at", 250),
         base44.entities.Fan.list("-created_date", 500),
         base44.entities.CreatorProfile.list("-created_date", 10),
         base44.entities.FanvueConnection.list("-created_date", 10),

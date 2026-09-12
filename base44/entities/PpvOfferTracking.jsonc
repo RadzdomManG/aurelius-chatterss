@@ -18,7 +18,8 @@
       "type": "string"
     },
     "message_id": {
-      "type": "string"
+      "type": "string",
+      "description": "Fanvue message UUID of the sent PPV bubble, used to reconcile unlocks against spending insights"
     },
     "sent_at": {
       "type": "string",
@@ -26,6 +27,15 @@
     },
     "price_cents": {
       "type": "integer"
+    },
+    "purchased": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once the fan unlocked this offer; until then the set stays re-offerable on later turns."
+    },
+    "purchased_at": {
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [

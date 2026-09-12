@@ -54,6 +54,15 @@ export default function PpvSetCard({ set, creatorProfileId, onEdit, onDelete, on
           <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
             {set.description || "No description"}
           </p>
+          {Array.isArray(set.tags) && set.tags.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {set.tags.map((t) => (
+                <span key={t} className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-accent-foreground">
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button

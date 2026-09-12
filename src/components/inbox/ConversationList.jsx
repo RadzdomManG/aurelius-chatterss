@@ -4,6 +4,15 @@ import ConversationRow from "@/components/inbox/ConversationRow";
 
 const FILTERS = ["All", "Unread", "AI", "Paused"];
 
+// Fanvue "suggested creator" promo blasts look like a profile link in the
+// form fanvue.com/<handle>/fv-<n>. These junk chats clutter the inbox — hide
+// them unless the operator explicitly shows empty conversations.
+const PROMO_LINK_RE = /fanvue\.com\/[\w.-]+\/fv-\d+/i;
+function isPromoPreview(preview) {
+  if (!preview || typeof preview !== "string") return false;
+  return PROMO_LINK_RE.test(preview);
+}
+
 export default function ConversationList({
   conversations,
   fans,
@@ -33,10 +42,15 @@ export default function ConversationList({
     }
     let result = Array.from(byFan.values());
 
-    // Hide empty conversations (no message preview and no last_message_at)
+    // Hide empty or promo-spam conversations (no real last_message_at, or a
+    // last_message_preview that is a Fanvue promo/suggested-creator link)
     // unless the operator explicitly toggled "Show empty".
     if (!showEmpty) {
-      result = result.filter((c) => c.last_message_preview || c.last_message_at);
+      result = result.filter((c) => {
+        if (!c.last_message_preview && !c.last_message_at) return false;
+        if (isPromoPreview(c.last_message_preview)) return false;
+        return true;
+      });
     }
 
     if (search.trim()) {
@@ -68,7 +82,7 @@ export default function ConversationList({
     return result;
   }, [conversations, fans, search, filter, showEmpty]);
 
-  const emptyCount = conversations.filter((c) => !c.last_message_preview && !c.last_message_at).length;
+  const emptyCount = conversations.filter((c) => (!c.last_message_preview && !c.last_message_at) || isPromoPreview(c.last_message_preview)).length;
 
   return (
     <div className="flex h-full w-80 shrink-0 flex-col border-r border-border bg-card">

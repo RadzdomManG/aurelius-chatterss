@@ -1,4 +1,4 @@
-import { getValidAccessToken, sendFanvueMessage, getMedia } from "./fanvue-api.ts";
+import { getValidAccessToken, sendFanvueMessage, getMedia, apiCall } from "./fanvue-api.ts";
 import { callGrok } from "./grok-client.ts";
 import { isPaused } from "./app-config.ts";
 
@@ -213,6 +213,45 @@ async function getDefaultPpvMedia(accessToken: string, settings: any): Promise<s
   }
 }
 
+// ---- Purchase reconciliation ----
+// Best-effort: match this fan's PPV offers to Fanvue spending insights by
+// price + recency and mark matched offers purchased=true. Non-blocking — a
+// Fanvue API failure simply leaves offers unreconciled (still re-offerable).
+async function reconcilePurchases(base44: any, connection: any, fan: any, offers: any[]) {
+  const unreconciled = (offers || []).filter((o: any) => o.purchased !== true);
+  if (unreconciled.length === 0) return;
+  try {
+    const accessToken = await getValidAccessToken(connection, base44);
+    const spendRes: any = await apiCall(
+      `/v1/insights/spending?fanUuid=${encodeURIComponent(fan.external_uuid)}&size=50`,
+      accessToken
+    );
+    const items = Array.isArray(spendRes?.data) ? spendRes.data : Array.isArray(spendRes) ? spendRes : [];
+    const purchases: { amountCents: number; at: number; used: boolean }[] = [];
+    for (const t of items) {
+      const amt = Number(t.amount ?? t.price ?? t.amountCents ?? t.value);
+      const d = t.createdAt || t.created_at || t.date || t.timestamp || t.paidAt;
+      const s = String((t.type ?? t.source ?? t.category ?? t.transactionType) || "").toLowerCase();
+      if (isFinite(amt) && amt > 0 && d && (/ppv|locked|message/.test(s) || !s)) {
+        purchases.push({ amountCents: Math.round(amt), at: new Date(d).getTime(), used: false });
+      }
+    }
+    for (const offer of unreconciled) {
+      const sentAt = new Date(offer.sent_at).getTime();
+      const match = purchases.find((p) => !p.used && p.amountCents === (offer.price_cents || 0) && p.at >= sentAt);
+      if (match) {
+        match.used = true;
+        try {
+          await base44.asServiceRole.entities.PpvOfferTracking.update(offer.id, { purchased: true, purchased_at: new Date(match.at).toISOString() });
+          offer.purchased = true;
+        } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.error("[ai] purchase reconciliation failed:", (e as any).message);
+  }
+}
+
 // ---- Retry with exponential backoff for Fanvue send ----
 async function sendWithRetry(accessToken: string, fanUuid: string, reply: string, ppvCents: number | null, media: any, maxRetries = 3): Promise<any> {
   let lastErr: any;
@@ -255,7 +294,7 @@ const AI_JSON_SCHEMA = {
     sentiment: { type: "string" },
     suggested_ppv_cents: { type: "number" },
     ppv_reason: { type: "string" },
-    chosen_set_id: { type: "string", description: "If offering PPV, the id of the curated content set whose description best matches the fan's mood/request. null if not offering. Pick only from the set catalog provided in the message." },
+    chosen_set_id: { type: "string", description: "If offering PPV, the id of the curated content set that best matches the fan's request — match the fan's words to a set's TAGS first, then fall back to the closest description. null if not offering. Pick only from the set catalog provided in the message." },
     memory_updates: {
       type: "array",
       items: { type: "object", properties: { key: { type: "string" }, value: { type: "string" } } },
@@ -531,10 +570,17 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
         base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 50),
       ]);
       contentSets = allSets || [];
-      const sentSetIds = new Set((sentTracking || []).map((t: any) => t.content_set_id));
-      availableSets = contentSets.filter((s: any) => !sentSetIds.has(s.id));
+      // Reconcile which offers the fan actually unlocked (best-effort, non-blocking),
+      // then exclude ONLY purchased sets — offered-but-not-purchased bundles stay
+      // re-offerable on the next eligible turn.
+      if (connection && fan) await reconcilePurchases(base44, connection, fan, sentTracking || []);
+      const purchasedSetIds = new Set((sentTracking || []).filter((t: any) => t.purchased === true).map((t: any) => t.content_set_id));
+      availableSets = contentSets.filter((s: any) => !purchasedSetIds.has(s.id));
       setCatalogStr = availableSets.length > 0
-        ? availableSets.map((s: any) => `id: ${s.id} | name: "${s.name}" | description: ${s.description || s.name} | suggested_price: $${((s.suggested_price_cents || 1200) / 100).toFixed(2)}`).join("\n")
+        ? availableSets.map((s: any) => {
+            const tags = Array.isArray(s.tags) && s.tags.length ? s.tags.join(", ") : "";
+            return `id: ${s.id} | name: "${s.name}" | tags: ${tags || "(none)"} | description: ${s.description || s.name} | suggested_price: $${((s.suggested_price_cents || 1200) / 100).toFixed(2)}`;
+          }).join("\n")
         : "(no curated sets available — do NOT offer PPV this turn; you have nothing locked to send)";
     }
 
@@ -678,7 +724,8 @@ ${bannedQuestionsStr}
 
 SALES CONTEXT:
 ${ppvAllowed ? `- PPV is ALLOWED right now. Offer it ONLY when the fan is clearly turned on.\n- NEVER mention price, money, or picture counts — tease the content only.\n- Keep it suggestive and teasing, never graphic or explicit.\n- Valid price rungs (internal, never spoken): ${ladderStr}\n- Start low ($10–12) for newer fans, climb toward $400 as rapport/heat grows. Pick the rung matching heat + relationship.
-- CONTENT SETS (curated locked bundles — choose the ONE whose description best matches the fan's mood/request and put its id in chosen_set_id; the system attaches its media and sets the price):
+- CONTENT SETS (curated locked bundles — choose the ONE that best matches the fan's request and put its id in chosen_set_id; the system attaches its media and sets the price):
+  MATCHING PRIORITY: first match the fan's words to a set's TAGS (e.g. if the fan mentions "dildo", pick a set tagged "dildo"). If no tag matches, pick the set whose DESCRIPTION closest fits the fan's mood/request.
 ${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn. Just keep the conversation warm and suggestive.`}
 ${forcePpv ? "\nFORCE PPV THIS TURN: The fan has now asked for explicit content 3+ times — a clear buying signal, and a PPV slot is open. You MUST offer a PPV in the LAST bubble this turn. Keep it SUGGESTIVE and teasing (never graphic), like sharing something private and risky. NEVER mention price, money, or picture counts — the system handles both. Pick the price rung that matches this fan's heat + rapport (start low for newer fans, climb from there)." : ""}
 ${tooManyQuestions ? "\nNOTE: You have asked questions in your last several replies. Still end with a question this time, but make it a genuinely fresh angle — different topic, different kind of question — and do not repeat any banned recent question." : ""}
@@ -910,12 +957,14 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "sending", attached_media_uuids: attachedMediaUuids });
 
       const accessToken = await getValidAccessToken(connection, base44);
+      let lastSentMsgUuid: string | null = null;
       for (let i = 0; i < replies.length; i++) {
         const isLast = i === replies.length - 1;
         const bubblePpv = isLast ? ppvCents : null;
         const bubbleMedia = isLast ? mediaForSend : null;
         const sendResult = await sendWithRetry(accessToken, fan.external_uuid, replies[i], bubblePpv, bubbleMedia);
         const su = sendResult?.messageUuid || sendResult?.uuid || sendResult?.data?.uuid || sendResult?.message?.uuid || sendResult?.id || null;
+        if (isLast && su) lastSentMsgUuid = su;
         // Dedup by Fanvue message UUID. If the send response carried no UUID, skip
         // the local create and let the outbound webhook persist it as the single
         // source — otherwise a local (null-uuid) record + a webhook (real-uuid)
@@ -966,8 +1015,10 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
             fan_id: conversation.fan_id,
             conversation_id: conversationId,
             content_set_id: chosenSetId,
+            message_id: lastSentMsgUuid,
             sent_at: new Date().toISOString(),
             price_cents: ppvCents,
+            purchased: false,
           });
         } catch (e) {}
       }

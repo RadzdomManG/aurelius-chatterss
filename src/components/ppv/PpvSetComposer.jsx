@@ -10,11 +10,30 @@ export default function PpvSetComposer({ creatorProfileId, set, onClose, onSaved
   const isEdit = !!set;
   const [name, setName] = React.useState(set?.name || "");
   const [description, setDescription] = React.useState(set?.description || "");
+  const [tags, setTags] = React.useState(Array.isArray(set?.tags) ? set.tags : []);
+  const [tagInput, setTagInput] = React.useState("");
   const [mediaUuids, setMediaUuids] = React.useState(set?.media_uuids || []);
   const [priceCents, setPriceCents] = React.useState(set?.suggested_price_cents || 1200);
   const [saving, setSaving] = React.useState(false);
 
   const valid = name.trim() && description.trim() && mediaUuids.length >= 1 && mediaUuids.length <= 5;
+
+  const addTag = (raw) => {
+    const t = raw.trim().toLowerCase().replace(/,/g, "").trim();
+    if (t && !tags.includes(t)) setTags((prev) => [...prev, t]);
+    setTagInput("");
+  };
+
+  const removeTag = (t) => setTags((prev) => prev.filter((x) => x !== t));
+
+  const handleTagKey = (e) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addTag(tagInput);
+    } else if (e.key === "Backspace" && !tagInput && tags.length) {
+      setTags((prev) => prev.slice(0, -1));
+    }
+  };
 
   const handleSave = async () => {
     if (!valid) {
@@ -27,6 +46,7 @@ export default function PpvSetComposer({ creatorProfileId, set, onClose, onSaved
         creator_profile_id: creatorProfileId,
         name: name.trim(),
         description: description.trim(),
+        tags,
         media_uuids: mediaUuids,
         suggested_price_cents: priceCents,
         active: set?.active !== false,
@@ -69,7 +89,7 @@ export default function PpvSetComposer({ creatorProfileId, set, onClose, onSaved
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Cozy bedroom set"
+              placeholder="e.g. Dildo vault folder"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
@@ -85,6 +105,35 @@ export default function PpvSetComposer({ creatorProfileId, set, onClose, onSaved
               rows={3}
               className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Keyword tags <span className="text-xs font-normal text-muted-foreground">(the AI matches the fan's request to these first — e.g. "dildo", "couch", "car")</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-2 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
+              {tags.map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground">
+                  {t}
+                  <button
+                    type="button"
+                    onClick={() => removeTag(t)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={handleTagKey}
+                onBlur={() => tagInput && addTag(tagInput)}
+                placeholder={tags.length ? "" : "type a tag and press Enter"}
+                className="min-w-[8rem] flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              />
+            </div>
           </div>
 
           <div>

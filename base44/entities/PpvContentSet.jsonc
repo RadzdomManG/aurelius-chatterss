@@ -16,6 +16,13 @@
       "type": "string",
       "description": "Operator's caption of what is in the set \u2014 the AI reads this to pick the best-matching set and to write its own teaser"
     },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Keyword tags for content matching. When a fan requests specific content (e.g. 'dildo'), the AI matches the fan's words to a set's tags first, falling back to the description."
+    },
     "media_uuids": {
       "type": "array",
       "items": {
