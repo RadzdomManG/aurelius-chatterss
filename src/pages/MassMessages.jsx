@@ -27,7 +27,11 @@ export default function MassMessages() {
     try {
       setLoading(true);
       const res = await fanvueCall("listMassMessages_v1_experimental", { query: { size: 50 } });
-      setMessages(res?.data?.data || []);
+      // Guard: the Fanvue payload can wrap results in an object (paginated
+      // response) instead of a bare array — `|| []` won't catch a truthy
+      // object, which then crashes `messages.map`. Coerce to a real array.
+      const list = res?.data?.data;
+      setMessages(Array.isArray(list) ? list : Array.isArray(res?.data) ? res.data : []);
     } catch (e) {
       if (e?.code !== "MISSING_SCOPE") toast.error(e?.error || "Failed to load mass messages");
     } finally {
