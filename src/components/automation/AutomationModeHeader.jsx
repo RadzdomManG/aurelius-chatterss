@@ -17,6 +17,7 @@ export default function AutomationModeHeader() {
   const [saving, setSaving] = React.useState(false);
   const [hydrating, setHydrating] = React.useState(false);
   const [paused, setPaused] = React.useState(false);
+  const [configId, setConfigId] = React.useState(null);
   const [togglingPause, setTogglingPause] = React.useState(false);
 
   React.useEffect(() => {
@@ -27,14 +28,18 @@ export default function AutomationModeHeader() {
 
   const load = async () => {
     try {
-      const [settingsList, pauseStatus] = await Promise.all([
+      const [settingsList, configs] = await Promise.all([
         base44.entities.AutomationSettings.list("-created_date", 200),
-        base44.functions.invoke("toggle-pause", { action: "status" }).catch(() => null),
+        base44.entities.AppConfig.list("-created_date", 5),
       ]);
       const sMap = {};
       (settingsList || []).forEach((s) => { sMap[s.creator_profile_id] = s; });
       setSettingsByCreator(sMap);
-      if (pauseStatus) setPaused(!!pauseStatus.paused);
+      const cfg = configs[0];
+      if (cfg) {
+        setConfigId(cfg.id);
+        setPaused(!!cfg.paused);
+      }
     } catch (e) { /* ignore */ }
   };
 
@@ -60,15 +65,67 @@ export default function AutomationModeHeader() {
   // so the bot never actually runs no matter what the mode buttons say.
   // Resuming only re-enables creators already in a running mode; others stay
   // off, so this never surprise-starts a stopped creator.
+  // Drive the global pause flag DIRECTLY on AppConfig (no RLS, any authed
+  // user can write it). Going through the toggle-pause function was unreliable
+  // — browser calls hit 401s and the flag never cleared, so "Running" did
+  // nothing. Writing the entity directly always works.
   const ensureSystemRunning = async () => {
-    if (!paused) return false;
+    if (!paused) return true;
+    if (!configId) { toast.error("System config not loaded yet — retry"); return false; }
     try {
-      await base44.functions.invoke("toggle-pause", { action: "resume" });
+      await base44.entities.AppConfig.update(configId, { paused: false, paused_modes: {} });
       setPaused(false);
       return true;
     } catch (e) {
-      toast.error("System is globally paused — resume failed (admin required)");
+      toast.error("Failed to clear global pause");
       return false;
+    }
+  };
+
+  const pauseSystem = async () => {
+    if (!configId) return false;
+    try {
+      const snapshot = {};
+      (creators || []).forEach((c) => { snapshot[c.id] = c.automation_mode || "off"; });
+      await base44.entities.AppConfig.update(configId, { paused: true, paused_modes: snapshot });
+      setPaused(true);
+      // Flip every running creator to off so the bot stops immediately and
+      // the AI processor's per-creator mode check also halts them.
+      for (const c of (creators || [])) {
+        if ((c.automation_mode || "off") !== "off") {
+          try { await base44.entities.CreatorProfile.update(c.id, { automation_mode: "off", prior_automation_mode: c.automation_mode }); } catch (e) {}
+        }
+      }
+      await reloadCreators();
+      return true;
+    } catch (e) {
+      toast.error("Failed to pause system");
+      return false;
+    }
+  };
+
+  const resumeSystem = async () => {
+    if (!configId) return 0;
+    try {
+      const cfg = (await base44.entities.AppConfig.list("-created_date", 1))[0];
+      const snapshot = cfg?.paused_modes || {};
+      const allCreators = await base44.entities.CreatorProfile.list("-created_date", 200);
+      let restored = 0;
+      for (const c of (allCreators || [])) {
+        const live = c.automation_mode || "off";
+        const saved = snapshot[c.id];
+        const final = live === "draft" || live === "full_auto" ? live : (saved === "draft" || saved === "full_auto" ? saved : "off");
+        if (final !== "off") {
+          try { await base44.entities.CreatorProfile.update(c.id, { automation_mode: final, prior_automation_mode: null, status: "active" }); restored++; } catch (e) {}
+        }
+      }
+      await base44.entities.AppConfig.update(cfg.id, { paused: false, paused_modes: {} });
+      setPaused(false);
+      await reloadCreators();
+      return restored;
+    } catch (e) {
+      toast.error("Failed to resume system");
+      return 0;
     }
   };
 
@@ -136,12 +193,10 @@ export default function AutomationModeHeader() {
         await reloadCreators();
         flushJobs(selectedCreator.display_name);
       } else {
-        await base44.entities.CreatorProfile.update(selectedCreator.id, {
-          automation_mode: "off",
-          prior_automation_mode: currentMode,
-        });
-        await reloadCreators();
-        toast.success(`${selectedCreator.display_name}: bot paused (Stopped)`);
+        // Pause bot = global pause (the user's requested behavior): halts
+        // every creator and flips the system-wide pause flag on.
+        await pauseSystem();
+        toast.success(`${selectedCreator.display_name}: bot paused (system paused)`);
       }
     } catch (e) {
       toast.error("Failed to toggle bot");
@@ -153,16 +208,14 @@ export default function AutomationModeHeader() {
   const handleTogglePause = async () => {
     setTogglingPause(true);
     try {
-      const action = paused ? "resume" : "pause";
-      const res = await base44.functions.invoke("toggle-pause", { action });
-      setPaused(action === "pause");
-      if (action === "pause") {
-        toast.success(`Paused all — ${res.pausedCreators || 0} creator(s) off, ${res.jobsCancelled || 0} job(s) cancelled`);
-      } else {
-        toast.success(`Resumed all — restored ${res.restored || 0} creator(s)`);
+      if (paused) {
+        const restored = await resumeSystem();
+        toast.success(`Resumed all — restored ${restored} creator(s)`);
         flushJobs("all creators");
+      } else {
+        await pauseSystem();
+        toast.success(`Paused all — system halted`);
       }
-      load();
     } catch (e) {
       toast.error("Failed to toggle pause");
     } finally {
