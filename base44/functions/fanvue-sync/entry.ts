@@ -106,6 +106,7 @@ export default async function(req) {
     // === Phase 1: Sync chats -> fans + conversations (fast, no message fetching) ===
     let totalChats = 0;
     let totalMessages = 0;
+    let messageErrors = 0;
     const fansToCreate = [];
     const fansToUpdate = [];
     const convosToCreate = [];
@@ -213,7 +214,6 @@ export default async function(req) {
       const maxMessages = maxChatsWithMessages || 50; // cap to avoid timeout
       const messagesToCreate = [];
       let processed = 0;
-      let messageErrors = 0;
 
       for (const fanUuid of chatFanUuids) {
         if (processed >= maxMessages) break;
