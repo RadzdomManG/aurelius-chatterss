@@ -26,7 +26,7 @@
     },
     "ppv_allowed": {
       "type": "boolean",
-      "default": false
+      "default": true
     },
     "max_ppv_cents": {
       "type": "integer",
