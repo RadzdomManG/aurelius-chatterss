@@ -40,6 +40,21 @@ export default function AutomationModeHeader() {
 
   const selectedCreator = creators.find((c) => c.id === selectedCreatorId) || null;
 
+  // Kick the job processor immediately so the now-active creator's pending
+  // and needs-approval jobs flush right away, instead of waiting up to 5
+  // minutes for the recovery workflow. Fired after a mode/resume succeeds so
+  // it never blocks the UI or runs for a still-stopped bot.
+  const flushJobs = async (creatorName) => {
+    try {
+      const res = await base44.functions.invoke("recover-ai-jobs");
+      const total = (res?.recovered || 0) + (res?.pendingRecovered || 0) + (res?.needsApprovalConverted || 0);
+      toast.success(`${creatorName}: bot resumed${total > 0 ? ` — ${total} job(s) flushed` : ""}`);
+    } catch (e) {
+      // Recovery is best-effort; the 5-min workflow still backstops this.
+      toast.success(`${creatorName}: bot resumed`);
+    }
+  };
+
   const handleMode = async (mode) => {
     if (!selectedCreator) return;
     setSaving(true);
@@ -47,6 +62,7 @@ export default function AutomationModeHeader() {
       await base44.entities.CreatorProfile.update(selectedCreator.id, { automation_mode: mode });
       await reloadCreators();
       toast.success(`${selectedCreator.display_name}: ${MODES.find((m) => m.id === mode).label}`);
+      if (mode === "draft" || mode === "full_auto") flushJobs(selectedCreator.display_name);
     } catch (e) {
       toast.error("Failed to update mode");
     } finally {
@@ -72,7 +88,7 @@ export default function AutomationModeHeader() {
           prior_automation_mode: null,
         });
         await reloadCreators();
-        toast.success(`${selectedCreator.display_name}: bot resumed (${MODES.find((m) => m.id === restoreMode).label})`);
+        flushJobs(selectedCreator.display_name);
       } else {
         await base44.entities.CreatorProfile.update(selectedCreator.id, {
           automation_mode: "off",
@@ -98,6 +114,7 @@ export default function AutomationModeHeader() {
         toast.success(`Paused all — ${res.pausedCreators || 0} creator(s) off, ${res.jobsCancelled || 0} job(s) cancelled`);
       } else {
         toast.success(`Resumed all — restored ${res.restored || 0} creator(s)`);
+        flushJobs("all creators");
       }
       load();
     } catch (e) {
@@ -124,7 +141,10 @@ export default function AutomationModeHeader() {
   };
 
   const current = selectedCreator?.automation_mode || "off";
-  const runner = (selectedCreator && settingsByCreator[selectedCreator.id]?.runner_status) || "stopped";
+  // Derive the badge from live state — the stored runner_status field is
+  // vestigial (nothing writes it), so it always lied. This now always matches
+  // the mode buttons and the global pause banner.
+  const runner = paused ? "paused" : current === "off" ? "stopped" : "running";
 
   return (
     <div className="mb-6 space-y-3">
@@ -172,7 +192,7 @@ export default function AutomationModeHeader() {
               className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 ${
                 current === "off"
                   ? "border-success/50 text-success hover:bg-success/10"
-                  : "border-warning/50 text-warning hover:bg-warning/10"
+                  : "border-border text-muted-foreground hover:bg-accent"
               }`}
             >
               {current === "off" ? <PlayCircle className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
