@@ -3,6 +3,8 @@ import { base44 } from "@/api/base44Client";
 import { DollarSign, TrendingUp, Clock, RefreshCw, BarChart3 } from "lucide-react";
 import EmptyState from "@/components/shared/EmptyState";
 import CreatorComparisonTable from "@/components/analytics/CreatorComparisonTable";
+import { useCreator } from "@/lib/creator-context";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 const fmtMoney = (cents) => (cents ? `$${(cents / 100).toFixed(2)}` : "$0.00");
 const fmtSeconds = (s) => (s == null ? "—" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
@@ -14,6 +16,7 @@ const RANGES = [
 ];
 
 export default function Analytics() {
+  const { selectedCreatorId } = useCreator();
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [days, setDays] = React.useState(30);
@@ -32,10 +35,16 @@ export default function Analytics() {
 
   React.useEffect(() => {
     load(days);
-  }, [days, load]);
+  }, [days, load, selectedCreatorId]);
 
-  const creators = data?.creators || [];
-  const connectedCreators = creators.filter((c) => c.connected);
+  // Scope the comparison table to the selected creator (with a full roster
+  // view available when none is chosen). Summary cards always reflect the
+  // selected creator only so the numbers match the selector.
+  const allCreators = data?.creators || [];
+  const creators = selectedCreatorId
+    ? allCreators.filter((c) => c.creator_profile_id === selectedCreatorId || c.id === selectedCreatorId)
+    : allCreators;
+  const connectedCreators = allCreators.filter((c) => c.connected);
 
   const totals = creators.reduce(
     (acc, c) => {
@@ -87,14 +96,17 @@ export default function Analytics() {
               Tips, PPV sales & response times — {data?.date_range?.start} to {data?.date_range?.end}
             </p>
           </div>
-          <button
-            onClick={() => load(days)}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:opacity-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <CreatorSelector />
+            <button
+              onClick={() => load(days)}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* Range selector */}

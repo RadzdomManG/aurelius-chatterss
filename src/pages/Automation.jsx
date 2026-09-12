@@ -7,6 +7,7 @@ import RulesManager from "@/components/automation/RulesManager";
 import AutomationModeHeader from "@/components/automation/AutomationModeHeader";
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
+import { useCreator } from "@/lib/creator-context";
 
 const TABS = [
   { id: "queue", label: "Queue", icon: Clock },
@@ -17,6 +18,7 @@ const TABS = [
 ];
 
 export default function Automation() {
+  const { selectedCreatorId } = useCreator();
   const [tab, setTab] = React.useState("queue");
   const [jobs, setJobs] = React.useState([]);
   const [scheduled, setScheduled] = React.useState([]);
@@ -26,16 +28,20 @@ export default function Automation() {
     loadData();
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedCreatorId]);
 
   const loadData = async () => {
     try {
       const [jobList, schedList] = await Promise.all([
-        base44.entities.AIJob.list("-created_date", 100),
-        base44.entities.ScheduledAction.list("-scheduled_for", 50),
+        selectedCreatorId
+          ? base44.entities.AIJob.filter({ creator_profile_id: selectedCreatorId }, "-created_date", 100)
+          : base44.entities.AIJob.list("-created_date", 100),
+        selectedCreatorId
+          ? base44.entities.ScheduledAction.filter({ creator_profile_id: selectedCreatorId }, "-scheduled_for", 50)
+          : base44.entities.ScheduledAction.list("-scheduled_for", 50),
       ]);
-      setJobs(jobList);
-      setScheduled(schedList);
+      setJobs(jobList || []);
+      setScheduled(schedList || []);
     } catch (err) { /* ignore */ }
     finally { setLoading(false); }
   };

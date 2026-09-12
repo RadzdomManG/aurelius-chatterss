@@ -1,7 +1,9 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
-import { Square, FileEdit, Play, UserCheck, Loader2, Pause, PlayCircle, ChevronDown, Check } from "lucide-react";
+import { Square, FileEdit, Play, UserCheck, Loader2, Pause, PlayCircle } from "lucide-react";
+import { useCreator } from "@/lib/creator-context";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 const MODES = [
   { id: "off", label: "Stopped", icon: Square },
@@ -10,14 +12,12 @@ const MODES = [
 ];
 
 export default function AutomationModeHeader() {
-  const [creators, setCreators] = React.useState([]);
-  const [selectedCreatorId, setSelectedCreatorId] = React.useState(null);
+  const { creators, selectedCreatorId, reloadCreators } = useCreator();
   const [settingsByCreator, setSettingsByCreator] = React.useState({});
   const [saving, setSaving] = React.useState(false);
   const [hydrating, setHydrating] = React.useState(false);
   const [paused, setPaused] = React.useState(false);
   const [togglingPause, setTogglingPause] = React.useState(false);
-  const [pickerOpen, setPickerOpen] = React.useState(false);
 
   React.useEffect(() => {
     load();
@@ -27,22 +27,14 @@ export default function AutomationModeHeader() {
 
   const load = async () => {
     try {
-      const [creatorList, settingsList, pauseStatus] = await Promise.all([
-        base44.entities.CreatorProfile.list("-created_date", 100),
+      const [settingsList, pauseStatus] = await Promise.all([
         base44.entities.AutomationSettings.list("-created_date", 50),
         base44.functions.invoke("toggle-pause", { action: "status" }).catch(() => null),
       ]);
-      setCreators(Array.isArray(creatorList) ? creatorList : []);
       const sMap = {};
       (settingsList || []).forEach((s) => { sMap[s.creator_profile_id] = s; });
       setSettingsByCreator(sMap);
       if (pauseStatus) setPaused(!!pauseStatus.paused);
-      // Keep a valid selection: first load auto-picks the first creator;
-      // later loads preserve the current selection if it still exists.
-      setSelectedCreatorId((prev) => {
-        if (prev && creatorList.some((c) => c.id === prev)) return prev;
-        return creatorList[0]?.id || null;
-      });
     } catch (e) { /* ignore */ }
   };
 
@@ -53,7 +45,7 @@ export default function AutomationModeHeader() {
     setSaving(true);
     try {
       await base44.entities.CreatorProfile.update(selectedCreator.id, { automation_mode: mode });
-      setCreators((prev) => prev.map((c) => (c.id === selectedCreator.id ? { ...c, automation_mode: mode } : c)));
+      await reloadCreators();
       toast.success(`${selectedCreator.display_name}: ${MODES.find((m) => m.id === mode).label}`);
     } catch (e) {
       toast.error("Failed to update mode");
@@ -79,14 +71,14 @@ export default function AutomationModeHeader() {
           automation_mode: restoreMode,
           prior_automation_mode: null,
         });
-        setCreators((prev) => prev.map((c) => (c.id === selectedCreator.id ? { ...c, automation_mode: restoreMode, prior_automation_mode: null } : c)));
+        await reloadCreators();
         toast.success(`${selectedCreator.display_name}: bot resumed (${MODES.find((m) => m.id === restoreMode).label})`);
       } else {
         await base44.entities.CreatorProfile.update(selectedCreator.id, {
           automation_mode: "off",
           prior_automation_mode: currentMode,
         });
-        setCreators((prev) => prev.map((c) => (c.id === selectedCreator.id ? { ...c, automation_mode: "off", prior_automation_mode: currentMode } : c)));
+        await reloadCreators();
         toast.success(`${selectedCreator.display_name}: bot paused (Stopped)`);
       }
     } catch (e) {
@@ -147,46 +139,10 @@ export default function AutomationModeHeader() {
 
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-col gap-3">
-          {/* Creator selector */}
+          {/* Creator selector — shared app-level choice */}
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground">Creator:</span>
-            <div className="relative">
-              <button
-                onClick={() => setPickerOpen((o) => !o)}
-                disabled={creators.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
-              >
-                {selectedCreator ? selectedCreator.display_name : "No creators"}
-                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-              {pickerOpen && creators.length > 0 && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setPickerOpen(false)} />
-                  <div className="absolute left-0 top-full z-20 mt-1 max-h-64 w-64 overflow-y-auto rounded-md border border-border bg-popover py-1 shadow-lg scrollbar-thin">
-                    {creators.map((c) => {
-                      const mode = c.automation_mode || "off";
-                      const modeLabel = MODES.find((m) => m.id === mode)?.label || "Stopped";
-                      return (
-                        <button
-                          key={c.id}
-                          onClick={() => {
-                            setSelectedCreatorId(c.id);
-                            setPickerOpen(false);
-                          }}
-                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent"
-                        >
-                          <span className="flex flex-col">
-                            <span className="font-medium text-foreground">{c.display_name}</span>
-                            <span className="text-xs text-muted-foreground">@{c.username || "unknown"} · {modeLabel}</span>
-                          </span>
-                          {c.id === selectedCreatorId && <Check className="h-4 w-4 text-primary" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
+            <CreatorSelector />
           </div>
 
           {/* Mode buttons — control the selected creator */}

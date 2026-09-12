@@ -22,26 +22,15 @@ export async function fanvueCall(operationId, opts = {}) {
   }
 }
 
+// Resolves the FanvueConnection for the app-level selected creator (from
+// CreatorProvider). Pages that call fanvueCall should pass the returned
+// creator.id so the proxy uses the selected creator's connection — not just
+// the first connected one it finds.
 export function useConnection() {
-  const [state, setState] = React.useState({ connection: null, creator: null, loading: true });
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const [conns, creators] = await Promise.all([
-          base44.entities.FanvueConnection.list("-created_date", 20),
-          base44.entities.CreatorProfile.list("-created_date", 10),
-        ]);
-        const connection = conns.find((c) => c.status === "connected") || null;
-        const creator = connection
-          ? creators.find((c) => c.id === connection.creator_profile_id) || creators[0]
-          : creators[0] || null;
-        setState({ connection, creator, loading: false });
-      } catch (e) {
-        setState({ connection: null, creator: null, loading: false });
-      }
-    })();
-  }, []);
-  return state;
+  const { selectedCreator, selectedConnection, loaded } = useCreator();
+  const loading = !loaded;
+  const connection = selectedConnection?.status === "connected" ? selectedConnection : null;
+  return { connection, creator: selectedCreator, loading };
 }
 
 export function hasScope(connection, scope) {

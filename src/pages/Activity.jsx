@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
+import { useCreator } from "@/lib/creator-context";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 const CATEGORIES = [
   { id: "all", label: "All", icon: ActivityIcon },
@@ -38,6 +40,7 @@ const EVENT_META = {
 };
 
 export default function Activity() {
+  const { selectedCreatorId } = useCreator();
   const [logs, setLogs] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [filter, setFilter] = React.useState("all");
@@ -49,6 +52,9 @@ export default function Activity() {
     loadLogs();
     const unsub = base44.entities.ActivityLog.subscribe((event) => {
       if (event.type === "create") {
+        // Only surface events for the selected creator (system-level logs with
+        // no creator_profile_id are always shown so global pause/resume etc. stay visible).
+        if (selectedCreatorId && event.data?.creator_profile_id && event.data.creator_profile_id !== selectedCreatorId) return;
         setLogs((prev) => [event.data, ...prev].slice(0, 200));
         setNewIds((prev) => new Set(prev).add(event.data.id));
         setLive(true);
@@ -62,13 +68,19 @@ export default function Activity() {
       }
     });
     return unsub;
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCreatorId]);
 
   const loadLogs = async () => {
     try {
       setLoading(true);
-      const list = await base44.entities.ActivityLog.list("-created_date", 200);
-      setLogs(list);
+      let list = [];
+      if (selectedCreatorId) {
+        list = await base44.entities.ActivityLog.filter({ creator_profile_id: selectedCreatorId }, "-created_date", 200);
+      } else {
+        list = await base44.entities.ActivityLog.list("-created_date", 200);
+      }
+      setLogs(list || []);
     } catch (err) {
       toast.error("Failed to load activity logs");
     } finally {
@@ -101,12 +113,15 @@ export default function Activity() {
                 Real-time status of every AI reply, message send, and fan event
               </p>
             </div>
-            <button
-              onClick={loadLogs}
-              className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent"
-            >
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <CreatorSelector />
+              <button
+                onClick={loadLogs}
+                className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </button>
+            </div>
           </div>
 
           {/* Category filters */}

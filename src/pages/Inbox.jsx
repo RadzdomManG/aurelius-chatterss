@@ -7,6 +7,8 @@ import ChatThread from "@/components/inbox/ChatThread";
 import Inspector from "@/components/inbox/Inspector";
 import EmptyState from "@/components/shared/EmptyState";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import CreatorSelector from "@/components/shared/CreatorSelector";
+import { useCreator } from "@/lib/creator-context";
 import { MessageSquare, Plug, AlertCircle } from "lucide-react";
 
 function PanelFallback({ error, reset }) {
@@ -24,12 +26,14 @@ function PanelFallback({ error, reset }) {
 }
 
 export default function Inbox() {
+  const { selectedCreatorId, selectedCreator, selectedConnection, isConnected } = useCreator();
+  const creator = selectedCreator;
+  const connection = selectedConnection;
+  const hasConnection = isConnected;
   const [conversations, setConversations] = React.useState([]);
   const [fans, setFans] = React.useState({});
   const [memories, setMemories] = React.useState([]);
-  const [creator, setCreator] = React.useState(null);
   const [persona, setPersona] = React.useState(null);
-  const [connection, setConnection] = React.useState(null);
   const [selectedId, setSelectedId] = React.useState(null);
   const [messages, setMessages] = React.useState([]);
   const [loadingConvos, setLoadingConvos] = React.useState(true);
@@ -41,6 +45,12 @@ export default function Inbox() {
   const [aiState, setAiState] = React.useState(null);
   const [realtimeStatus, setRealtimeStatus] = React.useState("live");
   const [automationSettings, setAutomationSettings] = React.useState(null);
+  // All conversation ids belonging to the currently selected fan. A new
+  // message can land in a DUPLICATE conversation record for the same fan
+  // (ingest upserts by fan_id, but old sync-created duplicates persist).
+  // Tracking the full set lets realtime + polling surface every message
+  // in the thread regardless of which record it was stored against.
+  const activeConvIdsRef = React.useRef([]);
 
   // Keep a ref of the fans map so async callbacks (realtime, ensureFan) can
   // check membership without stale-closure issues.
@@ -62,30 +72,39 @@ export default function Inbox() {
     }
   }, []);
 
-  // Load initial data
+  // Load data scoped to the selected creator. Re-runs when the operator
+  // switches model via the shared selector.
   React.useEffect(() => {
+    if (!selectedCreatorId) {
+      setConversations([]);
+      setFans({});
+      setSelectedId(null);
+      setMessages([]);
+      setLoadingConvos(false);
+      return;
+    }
     loadInitialData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCreatorId]);
 
   const loadInitialData = async () => {
     try {
       setLoadingConvos(true);
+      setSelectedId(null);
+      setMessages([]);
+      activeConvIdsRef.current = [];
       // Use allSettled so one failed fetch doesn't blank the whole inbox.
       const settled = await Promise.allSettled([
-        base44.entities.Conversation.list("-last_message_at", 250),
-        base44.entities.Fan.list("-created_date", 500),
-        base44.entities.CreatorProfile.list("-created_date", 10),
-        base44.entities.FanvueConnection.list("-created_date", 10),
-        base44.entities.PersonaProfile.list("-created_date", 20),
-        base44.entities.AutomationSettings.list("-created_date", 20),
+        base44.entities.Conversation.filter({ creator_profile_id: selectedCreatorId }, "-last_message_at", 250),
+        base44.entities.Fan.filter({ creator_profile_id: selectedCreatorId }, "-created_date", 500),
+        base44.entities.PersonaProfile.filter({ creator_profile_id: selectedCreatorId }, "-created_date", 20),
+        base44.entities.AutomationSettings.filter({ creator_profile_id: selectedCreatorId }, "-created_date", 5),
       ]);
 
       const convos = settled[0].status === "fulfilled" ? settled[0].value : [];
       const fanList = settled[1].status === "fulfilled" ? settled[1].value : [];
-      const creators = settled[2].status === "fulfilled" ? settled[2].value : [];
-      const connections = settled[3].status === "fulfilled" ? settled[3].value : [];
-      const personas = settled[4].status === "fulfilled" ? settled[4].value : [];
-      const settingsList = settled[5].status === "fulfilled" ? settled[5].value : [];
+      const personas = settled[2].status === "fulfilled" ? settled[2].value : [];
+      const settingsList = settled[3].status === "fulfilled" ? settled[3].value : [];
 
       // Log any failures for debugging without blocking the UI
       settled.forEach((r, i) => {
@@ -97,11 +116,8 @@ export default function Inbox() {
       setFans(fanMap);
       setConversations(convos);
 
-      const activeCreator = creators[0] || null;
-      setCreator(activeCreator);
-      setConnection(connections.find((c) => c.creator_profile_id === activeCreator?.id) || null);
-      setPersona(personas.find((p) => p.creator_profile_id === activeCreator?.id && p.active) || null);
-      setAutomationSettings(settingsList.find((s) => s.creator_profile_id === activeCreator?.id) || null);
+      setPersona(personas.find((p) => p.active) || personas[0] || null);
+      setAutomationSettings(settingsList[0] || null);
 
       if (convos.length > 0) setSelectedId(convos[0].id);
 
@@ -122,7 +138,7 @@ export default function Inbox() {
 
     try {
       unsubMessages = base44.entities.Message.subscribe((event) => {
-        if (event.type === "create" && event.data.conversation_id === selectedId) {
+        if (event.type === "create" && activeConvIdsRef.current.includes(event.data.conversation_id)) {
           setMessages((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             // Dedup by id AND external_uuid so a webhook-created record (real
@@ -168,11 +184,14 @@ export default function Inbox() {
     // service-role-created record (common for webhook-ingested messages).
     const interval = setInterval(async () => {
       try {
+        const convIds = activeConvIdsRef.current;
         const [updated, recentMsgs] = await Promise.all([
-          base44.entities.Conversation.list("-updated_date", 50),
-          selectedId
-            ? base44.entities.Message.filter({ conversation_id: selectedId }, "created_date", 100)
-            : Promise.resolve(null),
+          selectedCreatorId
+            ? base44.entities.Conversation.filter({ creator_profile_id: selectedCreatorId }, "-updated_date", 50)
+            : Promise.resolve([]),
+          convIds.length > 0
+            ? Promise.allSettled(convIds.map((cid) => base44.entities.Message.filter({ conversation_id: cid }, "created_date", 100)))
+            : Promise.resolve([]),
         ]);
 
         setConversations((prev) => {
@@ -194,13 +213,17 @@ export default function Inbox() {
         // Merge any new messages into the open thread (dedup by id AND
         // external_uuid — matches the realtime path; a Fanvue-uuid record
         // patches an optimistic local placeholder instead of stacking).
-        if (Array.isArray(recentMsgs) && recentMsgs.length > 0) {
+        const allMsgs = [];
+        if (Array.isArray(recentMsgs)) {
+          recentMsgs.forEach((r) => { if (r.status === "fulfilled" && Array.isArray(r.value)) allMsgs.push(...r.value); });
+        }
+        if (allMsgs.length > 0) {
           setMessages((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const map = new Map(list.map((m) => [m.id, m]));
             const uuidIndex = new Map(list.filter((m) => m.external_uuid).map((m) => [m.external_uuid, m.id]));
             let changed = false;
-            recentMsgs.forEach((m) => {
+            allMsgs.forEach((m) => {
               const existingByUuid = m.external_uuid ? uuidIndex.get(m.external_uuid) : null;
               if (existingByUuid) {
                 const cur = map.get(existingByUuid);
@@ -230,7 +253,7 @@ export default function Inbox() {
       if (unsubConvos) unsubConvos();
       clearInterval(interval);
     };
-  }, [selectedId]);
+  }, [selectedId, selectedCreatorId]);
 
   // Load messages + memories + persona when conversation selected
   React.useEffect(() => {
@@ -251,33 +274,66 @@ export default function Inbox() {
   const loadMessages = async (convId) => {
     try {
       setLoadingMessages(true);
-      const msgs = await base44.entities.Message.filter({ conversation_id: convId }, "created_date", 100);
-      setMessages(Array.isArray(msgs) ? msgs : []);
+      const conv = conversations.find((c) => c.id === convId);
 
-      // Load pending AI draft for review (from auto-processing)
-      const pendingJobs = await base44.entities.AIJob.filter(
-        { conversation_id: convId, status: "needs_approval" },
-        "-created_date",
-        1
+      // Load messages across ALL conversation records for this fan. A new
+      // message can be ingested into a duplicate conversation record for the
+      // same fan (ingest upserts by fan_id but old sync-created duplicates
+      // persist), which is why the inbox showed a new message badge while the
+      // thread loaded an old conversation. Merging the full set fixes this.
+      let convIds = [convId];
+      if (conv?.fan_id && conv?.creator_profile_id) {
+        try {
+          const allConvos = await base44.entities.Conversation.filter(
+            { creator_profile_id: conv.creator_profile_id, fan_id: conv.fan_id },
+            "created_date",
+            50
+          );
+          if (allConvos && allConvos.length) convIds = allConvos.map((c) => c.id);
+        } catch (e) {}
+      }
+      activeConvIdsRef.current = convIds;
+
+      const msgResults = await Promise.allSettled(
+        convIds.map((cid) => base44.entities.Message.filter({ conversation_id: cid }, "created_date", 100))
       );
-      if (pendingJobs[0]?.reply_text) {
+      const merged = new Map();
+      msgResults.forEach((r) => {
+        if (r.status === "fulfilled" && Array.isArray(r.value)) {
+          r.value.forEach((m) => {
+            const key = m.external_uuid ? `u:${m.external_uuid}` : `i:${m.id}`;
+            if (!merged.has(key)) merged.set(key, m);
+          });
+        }
+      });
+      const msgs = Array.from(merged.values()).sort(
+        (a, b) => new Date(a.created_date) - new Date(b.created_date)
+      );
+      setMessages(msgs);
+
+      // Load pending AI draft for review (from auto-processing) — check
+      // across the fan's conversations so a draft on a duplicate record still
+      // surfaces.
+      const pendingResults = await Promise.allSettled(
+        convIds.map((cid) => base44.entities.AIJob.filter({ conversation_id: cid, status: "needs_approval" }, "-created_date", 1))
+      );
+      let pendingJob = null;
+      pendingResults.forEach((r) => { if (r.status === "fulfilled" && r.value[0] && !pendingJob) pendingJob = r.value[0]; });
+      if (pendingJob?.reply_text) {
         setDraft({
-          reply: pendingJobs[0].reply_text,
-          confidence: pendingJobs[0].confidence,
-          jobId: pendingJobs[0].id,
-          // Carry the locked content + price the AI chose so Approve & Send
-          // actually delivers a locked PPV instead of a free text message.
-          ppvCents: pendingJobs[0].ppv_cents || null,
-          mediaUuids: Array.isArray(pendingJobs[0].attached_media_uuids) && pendingJobs[0].attached_media_uuids.length
-            ? pendingJobs[0].attached_media_uuids
+          reply: pendingJob.reply_text,
+          confidence: pendingJob.confidence,
+          jobId: pendingJob.id,
+          ppvCents: pendingJob.ppv_cents || null,
+          mediaUuids: Array.isArray(pendingJob.attached_media_uuids) && pendingJob.attached_media_uuids.length
+            ? pendingJob.attached_media_uuids
             : null,
-          contentSetId: pendingJobs[0].content_set_id || null,
+          contentSetId: pendingJob.content_set_id || null,
         });
       } else {
         setDraft(null);
       }
 
-      const conv = conversations.find((c) => c.id === convId);
       if (conv && conv.unread_count > 0) {
         await base44.entities.Conversation.update(convId, { unread_count: 0 });
         setConversations((prev) => prev.map((c) => (c.id === convId ? { ...c, unread_count: 0 } : c)));
@@ -295,12 +351,6 @@ export default function Inbox() {
       if (!conv) return;
       const mems = await base44.entities.FanMemory.filter({ fan_id: conv.fan_id }, "-created_date", 50);
       setMemories(mems);
-
-      // Load persona for this creator if not already loaded
-      if (conv.creator_profile_id && conv.creator_profile_id !== creator?.id) {
-        const personas = await base44.entities.PersonaProfile.filter({ creator_profile_id: conv.creator_profile_id }, "-created_date", 5);
-        setPersona(personas.find((p) => p.active) || personas[0] || null);
-      }
     } catch (err) {
       console.error("Failed to load memories:", err);
     }
@@ -616,8 +666,6 @@ export default function Inbox() {
       toast.error("Fanvue delivery failed");
     }
   };
-
-  const hasConnection = connection?.status === "connected";
 
   return (
     <div className="flex h-full">

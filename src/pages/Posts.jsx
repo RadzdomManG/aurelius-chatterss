@@ -7,9 +7,10 @@ import EmptyState from "@/components/shared/EmptyState";
 import PostComposer from "@/components/posts/PostComposer";
 import PostCard from "@/components/posts/PostCard";
 import PostDetailDialog from "@/components/posts/PostDetailDialog";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 export default function Posts() {
-  const { connection, loading: loadingConn } = useConnection();
+  const { connection, creator, loading: loadingConn } = useConnection();
   const [posts, setPosts] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [creating, setCreating] = React.useState(false);
@@ -19,7 +20,7 @@ export default function Posts() {
     if (!connection) return;
     try {
       setLoading(true);
-      const res = await fanvueCall("listPostsV1", { query: { size: 30, includeUnpublished: "true" } });
+      const res = await fanvueCall("listPostsV1", { query: { size: 30, includeUnpublished: "true" }, creatorProfileId: creator?.id });
       setPosts(res?.data?.data || []);
     } catch (e) {
       if (e?.code !== "MISSING_SCOPE") toast.error(e?.error || "Failed to load posts");
@@ -35,7 +36,7 @@ export default function Posts() {
     if (!confirmIt) return;
     try {
       setCreating(true);
-      await fanvueCall("createPost", { data, confirm: !!data.price });
+      await fanvueCall("createPost", { data, confirm: !!data.price, creatorProfileId: creator?.id });
       toast.success("Post published");
       await load();
     } catch (e) {
@@ -47,7 +48,7 @@ export default function Posts() {
 
   const handlePin = async (post) => {
     try {
-      await fanvueCall(post.isPinned ? "unpinPost" : "pinPost", { params: { uuid: post.uuid } });
+      await fanvueCall(post.isPinned ? "unpinPost" : "pinPost", { params: { uuid: post.uuid }, creatorProfileId: creator?.id });
       toast.success(post.isPinned ? "Unpinned" : "Pinned");
       await load();
     } catch (e) { toast.error(e?.error || "Failed"); }
@@ -56,7 +57,7 @@ export default function Posts() {
   const handleRepost = async (post) => {
     if (!window.confirm("Repost this post?")) return;
     try {
-      await fanvueCall("repostPost", { params: { uuid: post.uuid } });
+      await fanvueCall("repostPost", { params: { uuid: post.uuid }, creatorProfileId: creator?.id });
       toast.success("Reposted");
       await load();
     } catch (e) { toast.error(e?.error || "Failed"); }
@@ -65,7 +66,7 @@ export default function Posts() {
   const handleDelete = async (post) => {
     if (!window.confirm("Delete this post? This cannot be undone.")) return;
     try {
-      await fanvueCall("deletePost", { params: { uuid: post.uuid }, confirm: true });
+      await fanvueCall("deletePost", { params: { uuid: post.uuid }, confirm: true, creatorProfileId: creator?.id });
       setPosts((prev) => prev.filter((p) => p.uuid !== post.uuid));
       toast.success("Post deleted");
     } catch (e) { toast.error(e?.error || "Failed"); }
@@ -78,7 +79,10 @@ export default function Posts() {
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
       <div className="mx-auto max-w-3xl px-6 py-8">
-        <h1 className="mb-1 font-heading text-3xl text-foreground">Posts</h1>
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h1 className="font-heading text-3xl text-foreground">Posts</h1>
+          <CreatorSelector />
+        </div>
         <p className="mb-6 text-sm text-muted-foreground">Publish, pin, repost and engage with comments, likes and tips</p>
 
         <div className="mb-8">

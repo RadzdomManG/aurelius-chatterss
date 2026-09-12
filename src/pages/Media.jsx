@@ -6,42 +6,31 @@ import { Image as ImageIcon, Film, Folder, Plug, Download, Lock, DollarSign, Shi
 import EmptyState from "@/components/shared/EmptyState";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { getMediaThumbnail, isMediaVideo, getMediaPriceCents } from "@/lib/vault-utils";
+import { useCreator } from "@/lib/creator-context";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 export default function Media() {
-  const [hasConnection, setHasConnection] = React.useState(false);
-  const [loading, setLoading] = React.useState(true);
+  const { selectedCreator, selectedConnection, isConnected, loaded } = useCreator();
   const [mediaItems, setMediaItems] = React.useState([]);
   const [fetching, setFetching] = React.useState(false);
-  const [creator, setCreator] = React.useState(null);
   const [nextCursor, setNextCursor] = React.useState(null);
   const [needsReconnect, setNeedsReconnect] = React.useState(false);
   const [ageVerification, setAgeVerification] = React.useState(false);
-  const [grantedScopes, setGrantedScopes] = React.useState([]);
+
+  const creator = selectedCreator;
+  const hasConnection = isConnected;
+  const loading = !loaded;
+  const grantedScopes = selectedConnection?.granted_scopes || [];
 
   React.useEffect(() => {
-    checkConnection();
-  }, []);
-
-  const checkConnection = async () => {
-    try {
-      const [conns, creators] = await Promise.all([
-        base44.entities.FanvueConnection.list("-created_date", 10),
-        base44.entities.CreatorProfile.list("-created_date", 10),
-      ]);
-      const connected = conns.find((c) => c.status === "connected");
-      setHasConnection(!!connected);
-      setCreator(creators.find((c) => c.id === connected?.creator_profile_id) || creators[0] || null);
-      setGrantedScopes(connected?.granted_scopes || []);
-
-      if (connected) {
-        await fetchMedia(connected.creator_profile_id, null, true);
-      }
-    } catch (err) {
-      console.error("Failed to check connection:", err);
-    } finally {
-      setLoading(false);
+    if (hasConnection && creator) {
+      fetchMedia(creator.id, null, true);
+    } else {
+      setMediaItems([]);
+      setNextCursor(null);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasConnection, creator?.id]);
 
   const fetchMedia = async (creatorProfileId, cursor = null, replace = false) => {
     try {
@@ -147,16 +136,19 @@ export default function Media() {
               </p>
             )}
           </div>
-          {creator && (
-            <button
-              onClick={() => fetchMedia(creator.id, null, true)}
-              disabled={fetching}
-              className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
-            >
-              <Download className={`h-4 w-4 ${fetching ? "animate-bounce" : ""}`} />
-              Refresh
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <CreatorSelector />
+            {creator && (
+              <button
+                onClick={() => fetchMedia(creator.id, null, true)}
+                disabled={fetching}
+                className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+              >
+                <Download className={`h-4 w-4 ${fetching ? "animate-bounce" : ""}`} />
+                Refresh
+              </button>
+            )}
+          </div>
         </div>
 
         {fetching && mediaItems.length === 0 ? (

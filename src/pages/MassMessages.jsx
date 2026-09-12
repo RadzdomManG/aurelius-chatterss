@@ -5,6 +5,7 @@ import { fanvueCall, useConnection, money, fmtDateShort } from "@/lib/fanvue-gat
 import ScopeGate from "@/components/shared/ScopeGate";
 import EmptyState from "@/components/shared/EmptyState";
 import MassMessageComposer from "@/components/mass/MassMessageComposer";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 const STATUS_STYLES = {
   SENT: "bg-success/15 text-success",
@@ -16,7 +17,7 @@ const STATUS_STYLES = {
 };
 
 export default function MassMessages() {
-  const { connection, loading: loadingConn } = useConnection();
+  const { connection, creator, loading: loadingConn } = useConnection();
   const [messages, setMessages] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [sending, setSending] = React.useState(false);
@@ -26,7 +27,7 @@ export default function MassMessages() {
     if (!connection) return;
     try {
       setLoading(true);
-      const res = await fanvueCall("listMassMessages_v1_experimental", { query: { size: 50 } });
+      const res = await fanvueCall("listMassMessages_v1_experimental", { query: { size: 50 }, creatorProfileId: creator?.id });
       // Guard: the Fanvue payload can wrap results in an object (paginated
       // response) instead of a bare array — `|| []` won't catch a truthy
       // object, which then crashes `messages.map`. Coerce to a real array.
@@ -48,7 +49,7 @@ export default function MassMessages() {
     if (!window.confirm(`Send this mass message to: ${recipients || "(none)"}${payload.price ? ` for ${money(payload.price)}` : ""}?`)) return;
     try {
       setSending(true);
-      await fanvueCall("sendMassMessage", { data: payload, confirm: true });
+      await fanvueCall("sendMassMessage", { data: payload, confirm: true, creatorProfileId: creator?.id });
       toast.success("Mass message sent");
       await load();
     } catch (e) {
@@ -63,7 +64,7 @@ export default function MassMessages() {
     if (!window.confirm("Update this scheduled mass message?")) return;
     try {
       setSending(true);
-      await fanvueCall("updateMassMessage", { params: { messageUuid: editing.uuid }, data: payload, confirm: true });
+      await fanvueCall("updateMassMessage", { params: { messageUuid: editing.uuid }, data: payload, confirm: true, creatorProfileId: creator?.id });
       toast.success("Mass message updated");
       setEditing(null);
       await load();
@@ -79,7 +80,7 @@ export default function MassMessages() {
     const action = isSent ? "unsend" : "cancel";
     if (!window.confirm(`Are you sure you want to ${action} this mass message? This cannot be undone.`)) return;
     try {
-      await fanvueCall("deleteMassMessage", { params: { messageUuid: m.uuid }, confirm: true });
+      await fanvueCall("deleteMassMessage", { params: { messageUuid: m.uuid }, confirm: true, creatorProfileId: creator?.id });
       setMessages((prev) => prev.filter((x) => x.uuid !== m.uuid));
       if (editing?.uuid === m.uuid) setEditing(null);
       toast.success(isSent ? "Mass message unsent" : "Mass message cancelled");
@@ -101,7 +102,10 @@ export default function MassMessages() {
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
       <div className="mx-auto max-w-4xl px-6 py-8">
-        <h1 className="mb-1 font-heading text-3xl text-foreground">Mass Messages</h1>
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h1 className="font-heading text-3xl text-foreground">Mass Messages</h1>
+          <CreatorSelector />
+        </div>
         <p className="mb-6 text-sm text-muted-foreground">Broadcast PPV and free messages to fan segments</p>
 
         <div className="mb-8">

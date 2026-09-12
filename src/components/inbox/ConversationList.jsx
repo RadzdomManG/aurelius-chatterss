@@ -1,6 +1,7 @@
 import React from "react";
 import { Search, Filter } from "lucide-react";
 import ConversationRow from "@/components/inbox/ConversationRow";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 const FILTERS = ["All", "Unread", "AI", "Paused"];
 
@@ -90,6 +91,7 @@ export default function ConversationList({
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="font-heading text-xl text-foreground">Inbox</h2>
         <div className="flex items-center gap-2">
+          <CreatorSelector />
           <span className="inline-flex items-center gap-1 text-xs">
             <span className={`h-1.5 w-1.5 rounded-full ${realtimeStatus === "live" ? "bg-success" : "bg-warning animate-pulse"}`} />
             <span className={realtimeStatus === "live" ? "text-success" : "text-warning"}>{realtimeStatus === "live" ? "Live" : "Reconnecting"}</span>

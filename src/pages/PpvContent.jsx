@@ -1,41 +1,27 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
-import { Plus, Lock, Loader2, PackageOpen, ChevronDown } from "lucide-react";
+import { Plus, Lock, Loader2, PackageOpen } from "lucide-react";
 import PpvSetCard from "@/components/ppv/PpvSetCard";
 import PpvSetComposer from "@/components/ppv/PpvSetComposer";
+import { useCreator } from "@/lib/creator-context";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 export default function PpvContent() {
-  const [creators, setCreators] = React.useState([]);
-  const [creatorId, setCreatorId] = React.useState(null);
+  const { selectedCreatorId: creatorId, loaded } = useCreator();
   const [sets, setSets] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [composerOpen, setComposerOpen] = React.useState(false);
   const [editingSet, setEditingSet] = React.useState(null);
 
   React.useEffect(() => {
-    loadCreators();
-  }, []);
-
-  const loadCreators = async () => {
-    try {
-      setLoading(true);
-      const list = await base44.entities.CreatorProfile.list("-created_date", 50);
-      setCreators(list);
-      if (list.length > 0) setCreatorId(list[0].id);
-    } catch (err) {
-      toast.error("Failed to load creators");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  React.useEffect(() => {
     if (creatorId) loadSets(creatorId);
+    else { setSets([]); setLoading(false); }
   }, [creatorId]);
 
   const loadSets = async (cid) => {
     try {
+      setLoading(true);
       const list = await base44.entities.PpvContentSet.filter(
         { creator_profile_id: cid },
         "created_date",
@@ -44,6 +30,8 @@ export default function PpvContent() {
       setSets(list);
     } catch (err) {
       setSets([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -96,22 +84,7 @@ export default function PpvContent() {
               Curate locked content bundles. The AI reads each set's description, picks the best match for the fan's mood, attaches the media, and teases it — never repeating a set to the same fan.
             </p>
           </div>
-          {creators.length > 0 && (
-            <div className="relative">
-              <select
-                value={creatorId || ""}
-                onChange={(e) => setCreatorId(e.target.value)}
-                className="appearance-none rounded-md border border-input bg-background py-2 pl-3 pr-9 text-sm text-foreground focus:border-ring focus:outline-none"
-              >
-                {creators.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.display_name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            </div>
-          )}
+          <CreatorSelector />
         </div>
       </div>
 

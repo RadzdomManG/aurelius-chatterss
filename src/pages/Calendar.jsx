@@ -7,8 +7,11 @@ import {
 } from "date-fns";
 import StatusBadge from "@/components/shared/StatusBadge";
 import EmptyState from "@/components/shared/EmptyState";
+import { useCreator } from "@/lib/creator-context";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 export default function CalendarPage() {
+  const { selectedCreatorId } = useCreator();
   const [weekStart, setWeekStart] = React.useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [scheduled, setScheduled] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -17,13 +20,16 @@ export default function CalendarPage() {
 
   React.useEffect(() => {
     loadData();
-  }, []);
+  }, [selectedCreatorId]);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const list = await base44.entities.ScheduledAction.list("-scheduled_for", 50);
-      setScheduled(list.filter((s) => s.status === "pending"));
+      let list = [];
+      if (selectedCreatorId) {
+        list = await base44.entities.ScheduledAction.filter({ creator_profile_id: selectedCreatorId }, "-scheduled_for", 50);
+      }
+      setScheduled((list || []).filter((s) => s.status === "pending"));
       // Check Google Calendar connector status (would need backend function)
       setCalendarConnected(false);
     } catch (err) {
@@ -54,6 +60,7 @@ export default function CalendarPage() {
             <p className="mt-1 text-sm text-muted-foreground">Scheduled posts, mass messages, and Fanvue activities</p>
           </div>
           <div className="flex items-center gap-2">
+            <CreatorSelector />
             {calendarConnected ? (
               <StatusBadge variant="success" label="Google Calendar Connected" />
             ) : (

@@ -4,6 +4,7 @@ import { Users } from "lucide-react";
 import { fanvueCall, useConnection, money, fmtDate } from "@/lib/fanvue-gateway";
 import ScopeGate from "@/components/shared/ScopeGate";
 import EmptyState from "@/components/shared/EmptyState";
+import CreatorSelector from "@/components/shared/CreatorSelector";
 
 const STATUS_STYLES = {
   active: "bg-success/15 text-success",
@@ -13,7 +14,7 @@ const STATUS_STYLES = {
 };
 
 export default function Subscribers() {
-  const { connection, loading: loadingConn } = useConnection();
+  const { connection, creator, loading: loadingConn } = useConnection();
   const [tab, setTab] = React.useState("subscribers");
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -23,7 +24,7 @@ export default function Subscribers() {
     try {
       setLoading(true);
       const op = tab === "subscribers" ? "listSubscribers_v1_experimental" : "listFollowers_v1_experimental";
-      const res = await fanvueCall(op, { query: { size: 50 } });
+      const res = await fanvueCall(op, { query: { size: 50 }, creatorProfileId: creator?.id });
       setRows(res?.data?.data || []);
     } catch (e) {
       if (e?.code !== "MISSING_SCOPE") toast.error(e?.error || "Failed to load");
@@ -41,7 +42,10 @@ export default function Subscribers() {
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
       <div className="mx-auto max-w-3xl px-6 py-8">
-        <h1 className="mb-1 font-heading text-3xl text-foreground">Audience</h1>
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h1 className="font-heading text-3xl text-foreground">Audience</h1>
+          <CreatorSelector />
+        </div>
         <p className="mb-6 text-sm text-muted-foreground">Subscribers and followers</p>
 
         <div className="mb-4 flex gap-1 rounded-md border border-border p-1 w-fit">
