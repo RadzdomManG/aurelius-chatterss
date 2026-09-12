@@ -43,11 +43,16 @@ export default function ChatThread({
   const msgCount = Array.isArray(messages) ? messages.length : 0;
   const lastMsgId = Array.isArray(messages) && messages.length ? messages[messages.length - 1].id : null;
   const convId = conversation?.id;
+  // Scroll to the newest message on three triggers: when a genuinely new
+  // message arrives (msgCount/lastMsgId), when the conversation switches
+  // (convId), AND when the messages for the open conversation finish loading
+  // (loading flips to false) — so the scroll runs against the fully rendered
+  // thread instead of the stale empty one and actually lands at the bottom.
   React.useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [msgCount, lastMsgId, convId]);
+  }, [msgCount, lastMsgId, convId, loading]);
 
   // Check if last message is from fan with no creator/AI reply after it
   const lastMsg = Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null;

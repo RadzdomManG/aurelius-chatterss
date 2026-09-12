@@ -2,6 +2,7 @@ import React from "react";
 import { getMediaThumbnail, isMediaVideo } from "@/lib/vault-utils";
 import { getVaultMediaMap } from "@/lib/vault-media-cache";
 import { Film, ImageIcon } from "lucide-react";
+import { Image } from "@/components/ui/image";
 
 /**
  * Renders a message's attached media as a thumbnail strip.
@@ -35,11 +36,11 @@ export default function MessageMedia({ mediaUuids, creatorProfileId }) {
             className="relative h-16 w-16 overflow-hidden rounded-md border border-border/50 bg-muted"
           >
             {thumb ? (
-              <img
+              <Image
                 src={thumb}
                 alt=""
-                className="h-full w-full object-cover"
-                loading="lazy"
+                fittingType="fill"
+                className="h-full w-full"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center">
