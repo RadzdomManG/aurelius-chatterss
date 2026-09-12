@@ -25,6 +25,11 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
     ppv_ladder_enabled: autoSettings?.ppv_ladder_enabled ?? [...PPV_TIERS],
     ppv_min_messages_between_offers: autoSettings?.ppv_min_messages_between_offers ?? 5,
     ppv_min_minutes_between_offers: autoSettings?.ppv_min_minutes_between_offers ?? 10,
+    ppv_warmup_messages: autoSettings?.ppv_warmup_messages ?? 3,
+    ppv_reoffer_days: autoSettings?.ppv_reoffer_days ?? 2,
+    active_hours_enabled: autoSettings?.active_hours_enabled ?? false,
+    active_hours_start: autoSettings?.active_hours_start ?? "09:00",
+    active_hours_end: autoSettings?.active_hours_end ?? "23:00",
   });
   const [saving, setSaving] = React.useState(false);
 
@@ -42,6 +47,11 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
         ppv_ladder_enabled: autoSettings.ppv_ladder_enabled ?? [...PPV_TIERS],
         ppv_min_messages_between_offers: autoSettings.ppv_min_messages_between_offers ?? 5,
         ppv_min_minutes_between_offers: autoSettings.ppv_min_minutes_between_offers ?? 10,
+        ppv_warmup_messages: autoSettings.ppv_warmup_messages ?? 3,
+        ppv_reoffer_days: autoSettings.ppv_reoffer_days ?? 2,
+        active_hours_enabled: autoSettings.active_hours_enabled ?? false,
+        active_hours_start: autoSettings.active_hours_start ?? "09:00",
+        active_hours_end: autoSettings.active_hours_end ?? "23:00",
       });
     }
   }, [creator, autoSettings]);
@@ -119,12 +129,31 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
           </div>
         </div>
 
+        {/* Active hours (item 23) */}
+        <div className="rounded-md border border-border p-3">
+          <ToggleRow label="Active Hours (creator timezone)" value={settings.active_hours_enabled} onChange={(v) => setSettings({ ...settings, active_hours_enabled: v })} />
+          {settings.active_hours_enabled && (
+            <div className="mt-3 grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Start (local)</label>
+                <input type="time" value={settings.active_hours_start} onChange={(e) => setSettings({ ...settings, active_hours_start: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">End (local)</label>
+                <input type="time" value={settings.active_hours_end} onChange={(e) => setSettings({ ...settings, active_hours_end: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+            </div>
+          )}
+        </div>
+
         {settings.ppv_allowed && (
           <div className="rounded-md border border-border p-3">
             <p className="mb-1 text-xs font-medium text-foreground">PPV Price Ladder</p>
             <p className="mb-2.5 text-xs text-muted-foreground">The AI may only offer these prices. $10 is the hard minimum — lower tiers cannot be disabled.</p>
             <div className="flex flex-wrap gap-1.5">
-              {PPV_TIERS.map((c) => {
+              {[...new Set([...PPV_TIERS, ...(settings.ppv_ladder_enabled || [])])].sort((a, b) => a - b).map((c) => {
                 const on = (settings.ppv_ladder_enabled || []).includes(c);
                 const locked = c === 1000;
                 return (
@@ -142,6 +171,26 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
                   </button>
                 );
               })}
+            </div>
+            {/* Custom rung adder (item 9) */}
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="number"
+                min={1000}
+                step={500}
+                placeholder="Custom rung (cents)"
+                className="w-44 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const v = Math.max(1000, parseInt(e.target.value) || 0);
+                    if (v && !(settings.ppv_ladder_enabled || []).includes(v)) {
+                      setSettings({ ...settings, ppv_ladder_enabled: [...(settings.ppv_ladder_enabled || []), v].sort((a, b) => a - b) });
+                    }
+                    e.target.value = "";
+                  }
+                }}
+              />
+              <span className="text-xs text-muted-foreground">Press Enter to add a custom price tier.</span>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-4">
               <div>
@@ -164,6 +213,18 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Min Minutes Between Offers</label>
                 <input type="number" min={10} value={settings.ppv_min_minutes_between_offers} onChange={(e) => setSettings({ ...settings, ppv_min_minutes_between_offers: Math.max(10, parseInt(e.target.value) || 10) })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Warm-up Messages</label>
+                <input type="number" min={1} value={settings.ppv_warmup_messages} onChange={(e) => setSettings({ ...settings, ppv_warmup_messages: Math.max(1, parseInt(e.target.value) || 3) })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Re-offer Cooldown (days)</label>
+                <input type="number" min={0} value={settings.ppv_reoffer_days} onChange={(e) => setSettings({ ...settings, ppv_reoffer_days: Math.max(0, parseInt(e.target.value) || 2) })}
                   className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
               </div>
             </div>

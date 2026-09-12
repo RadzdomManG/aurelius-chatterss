@@ -3,6 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { DollarSign, TrendingUp, Clock, RefreshCw, BarChart3 } from "lucide-react";
 import EmptyState from "@/components/shared/EmptyState";
 import CreatorComparisonTable from "@/components/analytics/CreatorComparisonTable";
+import PpvConversionAnalytics from "@/components/analytics/PpvConversionAnalytics";
 import { useCreator } from "@/lib/creator-context";
 import CreatorSelector from "@/components/shared/CreatorSelector";
 
@@ -136,6 +137,9 @@ export default function Analytics() {
 
         {/* Comparison table */}
         <CreatorComparisonTable creators={creators} />
+
+        {/* PPV conversion analytics (item 12) */}
+        <PpvConversionAnalytics />
 
         <p className="mt-6 text-center text-xs text-muted-foreground">
           Revenue from Fanvue read:insights · Response time from Aurelius message history

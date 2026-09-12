@@ -162,6 +162,10 @@ function isRepetitive(reply: string, recentCreatorMsgs: any[]): boolean {
 // ---- PPV frequency limiting ----
 function isPpvOfferAllowed(conversation: any, settings: any, recentMsgs: any[]): boolean {
   if (!settings.ppv_allowed) return false;
+  // Warm-up floor (item 17): never offer PPV in the first N messages of a
+  // conversation so the AI builds rapport before any sales push.
+  const warmup = settings.ppv_warmup_messages ?? 3;
+  if ((recentMsgs || []).length < warmup) return false;
   const minMessages = settings.ppv_min_messages_between_offers || 5;
   const minMinutes = Math.max(settings.ppv_min_minutes_between_offers || 10, 10);
 
@@ -374,6 +378,21 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     return await skipJob("CIRCUIT_BREAKER_TRIPPED");
   }
 
+  // === ACTIVE HOURS (item 23) ===
+  // Only auto-send during the creator's configured active-hours window (in
+  // their timezone). Draft mode still records the draft for later approval.
+  if (autoMode === "AUTO" && settings?.active_hours_enabled && settings.active_hours_start && settings.active_hours_end) {
+    try {
+      const tz = creator?.timezone || "UTC";
+      const now = new Date();
+      const hh = parseInt(new Intl.DateTimeFormat("en-US", { hour: "2-digit", hour12: false, timeZone: tz }).format(now), 10);
+      const start = parseInt(String(settings.active_hours_start).split(":")[0], 10);
+      const end = parseInt(String(settings.active_hours_end).split(":")[0], 10);
+      const inside = start <= end ? (hh >= start && hh < end) : (hh >= start || hh < end);
+      if (!inside) return await skipJob("ACTIVE_HOURS");
+    } catch (e) {}
+  }
+
   if (!persona) return await skipJob("PERSONA_NOT_FOUND");
   if (!connection) return await skipJob("FANVUE_CONTACTABILITY");
   if (fan?.automation_paused) return await skipJob("FAN_PAUSED");
@@ -544,19 +563,29 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     // remains the price authority (the set's suggested price is a hint only).
     let contentSets: any[] = [];
     let availableSets: any[] = [];
+    let sentTracking: any[] = [];
     let setCatalogStr = "(no curated sets available)";
     if (ppvAllowed) {
-      const [allSets, sentTracking] = await Promise.all([
+      const [allSets, sent] = await Promise.all([
         base44.asServiceRole.entities.PpvContentSet.filter({ creator_profile_id: creatorProfileId, active: true }, "created_date", 50),
         base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 50),
       ]);
       contentSets = allSets || [];
-      // Reconcile which offers the fan actually unlocked (best-effort, non-blocking),
-      // then exclude ONLY purchased sets — offered-but-not-purchased bundles stay
-      // re-offerable on the next eligible turn.
-      if (connection && fan) await reconcilePurchases(base44, connection, fan, sentTracking || []);
-      const purchasedSetIds = new Set((sentTracking || []).filter((t: any) => t.purchased === true).map((t: any) => t.content_set_id));
-      availableSets = contentSets.filter((s: any) => !purchasedSetIds.has(s.id));
+      sentTracking = sent || [];
+      // Reconcile which offers the fan actually unlocked (best-effort, non-blocking).
+      // Exclude purchased sets forever, AND exclude sets offered-but-not-purchased
+      // within the re-offer cooldown (ppv_reoffer_days) — an unpurchased set only
+      // becomes re-offerable after the cooldown elapses (item 18).
+      if (connection && fan) await reconcilePurchases(base44, connection, fan, sentTracking);
+      const purchasedSetIds = new Set(sentTracking.filter((t: any) => t.purchased === true).map((t: any) => t.content_set_id));
+      const reofferMs = Math.max(settings.ppv_reoffer_days ?? 2, 0) * 86400000;
+      const nowMs = Date.now();
+      const recentOfferedSetIds = new Set(
+        sentTracking
+          .filter((t: any) => !t.purchased && t.sent_at && (nowMs - new Date(t.sent_at).getTime()) < reofferMs)
+          .map((t: any) => t.content_set_id)
+      );
+      availableSets = contentSets.filter((s: any) => !purchasedSetIds.has(s.id) && !recentOfferedSetIds.has(s.id));
       setCatalogStr = availableSets.length > 0
         ? availableSets.map((s: any) => {
             const tags = Array.isArray(s.tags) && s.tags.length ? s.tags.join(", ") : "";
@@ -735,6 +764,24 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       }
     }
 
+    // === SPEND-BASED DYNAMIC PRICING (item 11) ===
+    // Bump the rung up when this fan unlocks often; lower it when the last
+    // couple of offers went unpurchased. Only adjusts within the enabled ladder.
+    if (ppvCents && sentTracking.length >= 2) {
+      const enabled = getEnabledLadder(settings);
+      const idx = enabled.indexOf(ppvCents);
+      if (idx >= 0) {
+        const purchased = sentTracking.filter((t: any) => t.purchased).length;
+        const recent = sentTracking.slice(-3);
+        const recentPurchased = recent.filter((t: any) => t.purchased).length;
+        if (sentTracking.length >= 3 && purchased / sentTracking.length > 0.5 && idx < enabled.length - 1) {
+          ppvCents = enabled[idx + 1];
+        } else if (recent.length >= 2 && recentPurchased === 0 && idx > 0) {
+          ppvCents = enabled[idx - 1];
+        }
+      }
+    }
+
     // === RATE LIMIT CHECK ===
     let rateLimited = false;
     if (settings.max_replies_per_hour) {
@@ -777,19 +824,36 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       if (ppvCents && ppvCents > 0) {
         const freshConv = await base44.asServiceRole.entities.Conversation.get(conversationId);
         const minMinutes = Math.max(settings.ppv_min_minutes_between_offers || 10, 10);
+        let drop = false;
+        let dropReason = "";
         if (freshConv?.last_ppv_offer_at) {
           const minutesSince = (Date.now() - new Date(freshConv.last_ppv_offer_at).getTime()) / 60000;
           if (minutesSince < minMinutes) {
-            ppvCents = null;
-            await base44.asServiceRole.entities.ActivityLog.create({
-              creator_profile_id: creatorProfileId,
-              conversation_id: conversationId,
-              event_type: "ai.ppv_cooldown_drop",
-              status: "info",
-              message: `PPV dropped at send time — ${minutesSince.toFixed(1)}min since last offer (min ${minMinutes})`,
-              metadata: { job_id: job.id },
-            });
+            drop = true;
+            dropReason = `${minutesSince.toFixed(1)}min since last offer (min ${minMinutes})`;
           }
+        }
+        // Tracking-based dedup backstop (item 16): if a tracking record shows an
+        // offer was sent to this conversation within the cooldown (race with a
+        // concurrent job that already recorded PpvOfferTracking), drop this PPV.
+        if (!drop) {
+          const recentTrack = await base44.asServiceRole.entities.PpvOfferTracking.filter({ conversation_id: conversationId }, "-created_date", 5);
+          const minMs = minMinutes * 60000;
+          if (recentTrack.find((t: any) => t.sent_at && (Date.now() - new Date(t.sent_at).getTime()) < minMs)) {
+            drop = true;
+            dropReason = "recent tracking offer within cooldown";
+          }
+        }
+        if (drop) {
+          ppvCents = null;
+          await base44.asServiceRole.entities.ActivityLog.create({
+            creator_profile_id: creatorProfileId,
+            conversation_id: conversationId,
+            event_type: "ai.ppv_cooldown_drop",
+            status: "info",
+            message: `PPV dropped at send time — ${dropReason}`,
+            metadata: { job_id: job.id },
+          });
         }
       }
 

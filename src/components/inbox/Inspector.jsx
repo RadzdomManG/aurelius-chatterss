@@ -2,6 +2,8 @@ import React from "react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
 import { User, Brain, Pencil, Check, X, Sparkles } from "lucide-react";
+import PpvCooldownCard from "@/components/inbox/PpvCooldownCard";
+import ConversationControls from "@/components/inbox/ConversationControls";
 
 const TABS = [
   { key: "insights", label: "Fan Insights", icon: User },
@@ -81,14 +83,14 @@ export default function Inspector({ fan, memories, conversation, creator, aiStat
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {tab === "insights" && <FanInsights fan={fan} memories={memories} conversation={conversation} />}
+        {tab === "insights" && <FanInsights fan={fan} memories={memories} conversation={conversation} creatorId={creator?.id} />}
         {tab === "templates" && <TemplatesTab />}
       </div>
     </div>
   );
 }
 
-function FanInsights({ fan, memories, conversation }) {
+function FanInsights({ fan, memories, conversation, creatorId }) {
   if (!fan) {
     return <EmptyInspector text="Select a conversation to view fan insights" />;
   }
@@ -109,6 +111,8 @@ function FanInsights({ fan, memories, conversation }) {
 
       <SpendingBehavior fan={fan} />
       <SubscriptionCard fan={fan} />
+      <PpvCooldownCard conversation={conversation} creatorProfileId={creatorId} />
+      <ConversationControls fan={fan} conversation={conversation} />
       <NicknameField fan={fan} />
       <NotesField fan={fan} />
       <MemoryList memories={memories} />

@@ -1,7 +1,8 @@
 import React from "react";
 import { getMediaThumbnail, isMediaVideo } from "@/lib/vault-utils";
 import { getVaultMediaMap } from "@/lib/vault-media-cache";
-import { Film, ImageIcon, Lock, Pencil, Trash2, Check, X } from "lucide-react";
+import { Film, ImageIcon, Lock, Pencil, Trash2, Check, X, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 
 function MediaStrip({ mediaUuids, creatorProfileId }) {
   const [map, setMap] = React.useState(null);
@@ -46,6 +47,26 @@ function MediaStrip({ mediaUuids, creatorProfileId }) {
 }
 
 export default function PpvSetCard({ set, creatorProfileId, onEdit, onDelete, onToggleActive }) {
+  // Item 14 — dry-run validation: confirms the set has media that resolves in
+  // the vault, so PPV sends won't be silently downgraded to free messages.
+  const [validating, setValidating] = React.useState(false);
+  const handleValidate = async () => {
+    setValidating(true);
+    try {
+      if (!Array.isArray(set.media_uuids) || set.media_uuids.length === 0) {
+        toast.error("No media attached — PPV sends will be downgraded to free.");
+        return;
+      }
+      const map = await getVaultMediaMap(creatorProfileId);
+      const missing = set.media_uuids.filter((u) => !map.has(u));
+      if (missing.length > 0) toast.warning(`${missing.length} media item(s) not found in vault.`);
+      else toast.success(`Valid — ${set.media_uuids.length} item(s) lock correctly.`);
+    } catch (e) {
+      toast.error("Validation failed");
+    } finally {
+      setValidating(false);
+    }
+  };
   return (
     <div className="flex flex-col rounded-lg border border-border bg-card p-4">
       <div className="mb-3 flex items-start justify-between gap-2">
@@ -65,6 +86,14 @@ export default function PpvSetCard({ set, creatorProfileId, onEdit, onDelete, on
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={handleValidate}
+            disabled={validating}
+            title="Validate media (dry-run)"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-primary disabled:opacity-50"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={() => onEdit(set)}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"

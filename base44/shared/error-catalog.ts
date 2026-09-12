@@ -21,6 +21,7 @@ export type ErrorCode =
   | "DUPLICATE_JOB"
   | "CONVERSATION_LOCKED"
   | "CIRCUIT_BREAKER_TRIPPED"
+  | "ACTIVE_HOURS"
   | "AI_GENERATION_FAILED"
   | "AI_INVALID_REPLY"
   | "PPV_NO_CONTENT_SET"
@@ -51,6 +52,7 @@ const CATALOG: Record<ErrorCode, CatalogEntry> = {
   DUPLICATE_JOB: { label: "Duplicate automation job", fix: "Nothing to do — ignored.", severity: "info" },
   CONVERSATION_LOCKED: { label: "Conversation is being processed", fix: "Will retry automatically.", severity: "warning" },
   CIRCUIT_BREAKER_TRIPPED: { label: "Circuit breaker tripped (too many send failures)", fix: "Check Fanvue connection; the bot auto-paused for safety.", severity: "error" },
+  ACTIVE_HOURS: { label: "Outside active hours", fix: "The AI only replies during the creator's active-hours window.", severity: "info" },
   AI_GENERATION_FAILED: { label: "AI failed to generate a reply", fix: "Retries automatically; check Grok key if persistent.", severity: "error" },
   AI_INVALID_REPLY: { label: "AI returned an invalid reply", fix: "Retries automatically; check persona instructions.", severity: "warning" },
   PPV_NO_CONTENT_SET: { label: "No PPV content set available", fix: "Add a content set on the PPV Content page.", severity: "warning" },
@@ -72,6 +74,7 @@ const REASON_TO_CODE: Record<string, ErrorCode> = {
   CONVERSATION_LOCKED: "CONVERSATION_LOCKED",
   JOB_ALREADY_CLAIMED: "DUPLICATE_JOB",
   CIRCUIT_BREAKER_TRIPPED: "CIRCUIT_BREAKER_TRIPPED",
+  ACTIVE_HOURS: "ACTIVE_HOURS",
   RATE_LIMITED: "RATE_LIMITED",
 };
 
