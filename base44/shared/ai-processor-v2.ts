@@ -887,9 +887,12 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         }
         if (mediaUuidsToAttach.length > 0) {
           attachedMediaUuids = mediaUuidsToAttach;
+          // FULL-LOCK PPV: omit mediaPreviewUuid unless the creator explicitly
+          // opted into a free preview. Fanvue treats mediaPreviewUuid as a
+          // single free-to-view item; omitting it locks EVERY attached item.
           mediaForSend = {
             mediaUuids: attachedMediaUuids,
-            mediaPreviewUuid: attachedMediaUuids[0],
+            ...(settings.ppv_preview_enabled === true ? { mediaPreviewUuid: attachedMediaUuids[0] } : {}),
           };
           await base44.asServiceRole.entities.Conversation.update(conversationId, {
             last_ppv_offer_at: new Date().toISOString(),

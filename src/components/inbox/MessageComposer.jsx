@@ -1,6 +1,7 @@
 import React from "react";
 import { Paperclip, Lock, Sparkles, Send, RefreshCw, Check, DollarSign } from "lucide-react";
 import VaultPicker from "@/components/inbox/VaultPicker";
+import { base44 } from "@/api/base44Client";
 
 // Fanvue enforces a minimum PPV price of 300 cents ($3.00).
 const PPV_MIN_CENTS = 300;
@@ -23,6 +24,22 @@ export default function MessageComposer({
   const [ppvMode, setPpvMode] = React.useState(false);
   const [ppvAmount, setPpvAmount] = React.useState("");
   const [selectedMediaUuids, setSelectedMediaUuids] = React.useState([]);
+  const [previewEnabled, setPreviewEnabled] = React.useState(false);
+  const [ppvPreviewAllowed, setPpvPreviewAllowed] = React.useState(false);
+
+  // Fetch the creator's PPV preview setting once — gates whether the free-
+  // preview checkbox is offered. Default (setting off) = full lock.
+  React.useEffect(() => {
+    if (!creatorProfileId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await base44.entities.AutomationSettings.filter({ creator_profile_id: creatorProfileId }, "-created_date", 1);
+        if (!cancelled) setPpvPreviewAllowed(!!(list[0] && list[0].ppv_preview_enabled === true));
+      } catch (e) {}
+    })();
+    return () => { cancelled = true; };
+  }, [creatorProfileId]);
 
   const ppvCents = ppvMode && ppvAmount ? Math.round(parseFloat(ppvAmount) * 100) : null;
   const hasMedia = selectedMediaUuids.length > 0;
@@ -43,7 +60,11 @@ export default function MessageComposer({
     onSend({
       ppvCents: ppvMode ? ppvCents : null,
       mediaUuids: hasMedia ? selectedMediaUuids : null,
-      mediaPreviewUuid: hasMedia ? selectedMediaUuids[0] : null,
+      // Only pass a preview UUID when the operator explicitly enabled it AND
+      // the creator's setting allows previews. Default = full lock.
+      mediaPreviewUuid: hasMedia && previewEnabled && selectedMediaUuids[0]
+        ? selectedMediaUuids[0]
+        : null,
     });
     setPpvMode(false);
     setPpvAmount("");
@@ -148,6 +169,12 @@ export default function MessageComposer({
               selectedUuids={selectedMediaUuids}
               onPick={(uuids) => setSelectedMediaUuids(uuids)}
             />
+          )}
+          {ppvPreviewAllowed && hasMedia && (
+            <label className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={previewEnabled} onChange={(e) => setPreviewEnabled(e.target.checked)} className="h-3.5 w-3.5 rounded" />
+              Free preview of first image (the rest stay locked)
+            </label>
           )}
         </>
       )}

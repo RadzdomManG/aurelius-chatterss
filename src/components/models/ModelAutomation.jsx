@@ -29,6 +29,7 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
     ppv_reoffer_days: autoSettings?.ppv_reoffer_days ?? 2,
     ppv_source: autoSettings?.ppv_source ?? "curated_sets",
     vault_media_per_offer: autoSettings?.vault_media_per_offer ?? 3,
+    ppv_preview_enabled: autoSettings?.ppv_preview_enabled ?? false,
     active_hours_enabled: autoSettings?.active_hours_enabled ?? false,
     active_hours_start: autoSettings?.active_hours_start ?? "09:00",
     active_hours_end: autoSettings?.active_hours_end ?? "23:00",
@@ -57,6 +58,7 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
         ppv_reoffer_days: autoSettings.ppv_reoffer_days ?? 2,
         ppv_source: autoSettings.ppv_source ?? "curated_sets",
         vault_media_per_offer: autoSettings.vault_media_per_offer ?? 3,
+        ppv_preview_enabled: autoSettings.ppv_preview_enabled ?? false,
         active_hours_enabled: autoSettings.active_hours_enabled ?? false,
         active_hours_start: autoSettings.active_hours_start ?? "09:00",
         active_hours_end: autoSettings.active_hours_end ?? "23:00",
@@ -161,6 +163,17 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
                   className="w-32 rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
               </div>
             )}
+          </div>
+        )}
+
+        {settings.ppv_allowed && (
+          <div className="rounded-md border border-border p-3">
+            <ToggleRow label="PPV Preview — Free first image" value={settings.ppv_preview_enabled} onChange={(v) => setSettings({ ...settings, ppv_preview_enabled: v })} />
+            <p className="mt-1 text-xs text-muted-foreground">
+              {settings.ppv_preview_enabled
+                ? "ON — the first attached image is sent as a free teaser; the rest stay locked."
+                : "OFF (default) — every attached image/video is locked behind the paywall. Zero free previews."}
+            </p>
           </div>
         )}
 

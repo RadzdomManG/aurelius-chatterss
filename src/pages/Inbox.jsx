@@ -617,7 +617,8 @@ export default function Inbox() {
           body: reply,
           ppvCents: draftPpvCents,
           mediaUuids: draftMediaUuids,
-          mediaPreviewUuid: draftMediaUuids ? draftMediaUuids[0] : null,
+          // Full-lock by default; only unlock the first image if the creator opted in.
+          mediaPreviewUuid: draftMediaUuids && automationSettings?.ppv_preview_enabled === true ? draftMediaUuids[0] : null,
           messageId: msg.id,
         });
         setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, send_status: "sent" } : m)));

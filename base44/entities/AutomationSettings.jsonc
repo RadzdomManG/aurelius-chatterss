@@ -98,6 +98,11 @@
       "default": 3,
       "description": "Max number of unseen media items to attach per auto-vault PPV offer"
     },
+    "ppv_preview_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, the first PPV media item is sent to Fanvue as mediaPreviewUuid (shown free as a teaser). When false (default), mediaPreviewUuid is omitted entirely so ALL attached PPV media is locked behind the paywall \u2014 zero free previews."
+    },
     "rescue_enabled": {
       "type": "boolean",
       "default": true,

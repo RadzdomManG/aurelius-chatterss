@@ -47,8 +47,10 @@ export default async function(req) {
 
     // Send the message via Fanvue API (optionally with locked media + price)
     // Supports MULTIPLE media items — all are locked behind the PPV paywall.
+    // FULL-LOCK PPV: only forward an EXPLICIT mediaPreviewUuid from the caller.
+    // Never default to mediaUuids[0] — that would unlock the first image for free.
     const media = (mediaUuids && mediaUuids.length > 0)
-      ? { mediaUuids, mediaPreviewUuid: mediaPreviewUuid || mediaUuids[0] }
+      ? { mediaUuids, ...(mediaPreviewUuid ? { mediaPreviewUuid } : {}) }
       : null;
     const result = await sendFanvueMessage(
       accessToken,

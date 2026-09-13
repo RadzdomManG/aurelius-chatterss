@@ -131,7 +131,11 @@ export default async function (req: Request): Promise<Response> {
         // Send the rescue: SAME locked media at the discounted price. Content
         // stays LOCKED — never sent as a free attachment.
         const accessToken = await getValidAccessToken(connection, base44);
-        const mediaForSend = { mediaUuids: eligibility.valid, mediaPreviewUuid: eligibility.valid[0] };
+        // FULL-LOCK PPV: only include a free preview when the creator opted in.
+        const mediaForSend = {
+          mediaUuids: eligibility.valid,
+          ...(settings.ppv_preview_enabled === true ? { mediaPreviewUuid: eligibility.valid[0] } : {}),
+        };
         const rescueSentAt = new Date().toISOString();
         let lastSentMsgUuid = null;
         for (let i = 0; i < replies.length; i++) {
