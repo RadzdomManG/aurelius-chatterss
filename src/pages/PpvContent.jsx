@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Plus, Lock, Loader2, PackageOpen } from "lucide-react";
 import PpvSetCard from "@/components/ppv/PpvSetCard";
 import PpvSetComposer from "@/components/ppv/PpvSetComposer";
+import VaultPanel from "@/components/ppv/VaultPanel";
 import { useCreator } from "@/lib/creator-context";
 import CreatorSelector from "@/components/shared/CreatorSelector";
 
@@ -13,6 +14,7 @@ export default function PpvContent() {
   const [loading, setLoading] = React.useState(true);
   const [composerOpen, setComposerOpen] = React.useState(false);
   const [editingSet, setEditingSet] = React.useState(null);
+  const [tab, setTab] = React.useState("sets");
 
   React.useEffect(() => {
     if (creatorId) loadSets(creatorId);
@@ -81,13 +83,32 @@ export default function PpvContent() {
           <div>
             <h1 className="font-heading text-3xl text-foreground">PPV Content</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Curate locked content bundles. The AI reads each set's description, picks the best match for the fan's mood, attaches the media, and teases it — never repeating a set to the same fan.
+              Manage your locked pay-per-view content. Use Curated Sets for hand-built bundles, or Automatic Vault to let the AI pull unseen media from approved folders — zero manual approval.
             </p>
           </div>
           <CreatorSelector />
         </div>
+        {/* Tabs */}
+        <div className="mt-4 flex gap-1">
+          {[
+            { id: "sets", label: "Curated Sets" },
+            { id: "vault", label: "Automatic Vault" },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                tab === t.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {tab === "sets" && (
+      <>
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b border-border px-6 py-3">
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -144,6 +165,10 @@ export default function PpvContent() {
           </div>
         )}
       </div>
+
+      </>
+      )}
+      {tab === "vault" && <VaultPanel />}
 
       {/* Composer slide-over */}
       {composerOpen && creatorId && (

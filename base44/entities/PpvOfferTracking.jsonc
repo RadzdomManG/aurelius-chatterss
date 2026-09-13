@@ -15,11 +15,32 @@
       "type": "string"
     },
     "content_set_id": {
-      "type": "string"
+      "type": "string",
+      "description": "PpvContentSet id when source = set; null for vault offers"
     },
     "message_id": {
       "type": "string",
       "description": "Fanvue message UUID of the sent PPV bubble, used to reconcile unlocks against spending insights"
+    },
+    "media_uuids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The exact vault media UUIDs attached to this offer, used to dedup so a fan never receives the same locked media twice"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "set",
+        "vault"
+      ],
+      "default": "set",
+      "description": "set = curated PpvContentSet bundle; vault = auto-selected from synced Fanvue vault"
+    },
+    "folder_name": {
+      "type": "string",
+      "description": "Vault folder the media was drawn from (auto_vault mode)"
     },
     "sent_at": {
       "type": "string",

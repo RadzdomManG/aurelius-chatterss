@@ -27,6 +27,8 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
     ppv_min_minutes_between_offers: autoSettings?.ppv_min_minutes_between_offers ?? 10,
     ppv_warmup_messages: autoSettings?.ppv_warmup_messages ?? 3,
     ppv_reoffer_days: autoSettings?.ppv_reoffer_days ?? 2,
+    ppv_source: autoSettings?.ppv_source ?? "curated_sets",
+    vault_media_per_offer: autoSettings?.vault_media_per_offer ?? 3,
     active_hours_enabled: autoSettings?.active_hours_enabled ?? false,
     active_hours_start: autoSettings?.active_hours_start ?? "09:00",
     active_hours_end: autoSettings?.active_hours_end ?? "23:00",
@@ -49,6 +51,8 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
         ppv_min_minutes_between_offers: autoSettings.ppv_min_minutes_between_offers ?? 10,
         ppv_warmup_messages: autoSettings.ppv_warmup_messages ?? 3,
         ppv_reoffer_days: autoSettings.ppv_reoffer_days ?? 2,
+        ppv_source: autoSettings.ppv_source ?? "curated_sets",
+        vault_media_per_offer: autoSettings.vault_media_per_offer ?? 3,
         active_hours_enabled: autoSettings.active_hours_enabled ?? false,
         active_hours_start: autoSettings.active_hours_start ?? "09:00",
         active_hours_end: autoSettings.active_hours_end ?? "23:00",
@@ -115,6 +119,42 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
       <div className="space-y-4 rounded-lg border border-border bg-card p-5">
         <ToggleRow label="Approval Required (Draft mode)" value={settings.approval_required} onChange={(v) => setSettings({ ...settings, approval_required: v })} />
         <ToggleRow label="PPV Allowed" value={settings.ppv_allowed} onChange={(v) => setSettings({ ...settings, ppv_allowed: v })} />
+
+        {settings.ppv_allowed && (
+          <div className="rounded-md border border-border p-3">
+            <p className="mb-1 text-xs font-medium text-foreground">PPV Content Source</p>
+            <p className="mb-2.5 text-xs text-muted-foreground">
+              {settings.ppv_source === "auto_vault"
+                ? "Automatic Vault — the AI picks an approved folder and the system auto-attaches unseen locked media. Zero manual approval. Sync & approve folders on the PPV Content page."
+                : "Curated Sets — you build locked content bundles on the PPV Content page; the AI picks the best match."}
+            </p>
+            <div className="flex gap-2">
+              {[
+                { id: "curated_sets", label: "Curated Sets" },
+                { id: "auto_vault", label: "Automatic Vault" },
+              ].map((src) => (
+                <button
+                  key={src.id}
+                  type="button"
+                  onClick={() => setSettings({ ...settings, ppv_source: src.id })}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    settings.ppv_source === src.id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-accent"
+                  }`}
+                >
+                  {src.label}
+                </button>
+              ))}
+            </div>
+            {settings.ppv_source === "auto_vault" && (
+              <div className="mt-3">
+                <label className="mb-1 block text-xs text-muted-foreground">Media per offer (1–5)</label>
+                <input type="number" min={1} max={5} value={settings.vault_media_per_offer}
+                  onChange={(e) => setSettings({ ...settings, vault_media_per_offer: Math.max(1, Math.min(5, parseInt(e.target.value) || 3)) })}
+                  className="w-32 rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div>

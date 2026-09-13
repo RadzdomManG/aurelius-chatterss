@@ -273,7 +273,8 @@ const AI_JSON_SCHEMA = {
     sentiment: { type: "string" },
     suggested_ppv_cents: { type: "number" },
     ppv_reason: { type: "string" },
-    chosen_set_id: { type: "string", description: "If offering PPV, the id of the curated content set that best matches the fan's request — match the fan's words to a set's TAGS first, then fall back to the closest description. null if not offering. Pick only from the set catalog provided in the message." },
+    chosen_set_id: { type: "string", description: "If offering PPV from a curated-SETS catalog, the id of the set that best matches the fan's request — match the fan's words to a set's TAGS first, then fall back to the closest description. null if not offering or no set matches. If the catalog lists VAULT FOLDERS instead, leave this null and use chosen_folder." },
+    chosen_folder: { type: "string", description: "If offering PPV from a VAULT-FOLDER catalog, the folder name that best matches what the fan is asking for (e.g. lingerie, solo, outdoors). null if not offering or no folder matches. If the catalog lists curated SETS instead, leave this null and use chosen_set_id." },
     memory_updates: {
       type: "array",
       items: { type: "object", properties: { key: { type: "string" }, value: { type: "string" } } },
@@ -554,44 +555,83 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     const ppvAllowed = !!settings.ppv_allowed && ppvWindowOpen;
     const ladderStr = getEnabledLadder(settings).map((c) => `$${c / 100}`).join(", ");
 
-    // === CURATED PPV CONTENT SETS ===
-    // The operator pre-builds content bundles (media + description + suggested
-    // price) on the PPV Content page. When PPV is allowed, we load active sets
-    // for this creator, exclude any set already sent to this fan, and expose
-    // the catalog to the LLM so it can pick the best-matching set. The set's
-    // media_uuids are attached so the content is actually locked; the ladder
-    // remains the price authority (the set's suggested price is a hint only).
+    // === PPV CONTENT SOURCE ===
+    // Two sources, set per creator in AutomationSettings.ppv_source:
+    //  - curated_sets: operator-built PpvContentSet bundles (media + description + tags)
+    //  - auto_vault:  AI picks an approved vault FOLDER; the backend auto-attaches
+    //                 unseen synced VaultMedia from that folder (zero manual approval).
+    const ppvSource: "curated_sets" | "auto_vault" = settings.ppv_source === "auto_vault" ? "auto_vault" : "curated_sets";
     let contentSets: any[] = [];
     let availableSets: any[] = [];
     let sentTracking: any[] = [];
-    let setCatalogStr = "(no curated sets available)";
+    let availableVaultFolders: any[] = [];
+    let vaultMediaByFolder: Record<string, any[]> = {};
+    let setCatalogStr = ppvSource === "auto_vault"
+      ? "(no approved vault folders with unseen media)"
+      : "(no curated sets available)";
+    let catalogInstructions = ppvSource === "auto_vault"
+      ? `VAULT FOLDERS (your approved content categories — choose the ONE folder that best matches what the fan is asking for and put its name in chosen_folder; the system auto-attaches unseen locked media from that folder and sets the price).`
+      : `CONTENT SETS (curated locked bundles — choose the ONE that best matches the fan's request and put its id in chosen_set_id; the system attaches its media and sets the price). Match the fan's words to a set's TAGS first, then its DESCRIPTION.`;
     if (ppvAllowed) {
-      const [allSets, sent] = await Promise.all([
-        base44.asServiceRole.entities.PpvContentSet.filter({ creator_profile_id: creatorProfileId, active: true }, "created_date", 50),
-        base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 50),
-      ]);
-      contentSets = allSets || [];
+      const sent = await base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 100);
       sentTracking = sent || [];
-      // Reconcile which offers the fan actually unlocked (best-effort, non-blocking).
-      // Exclude purchased sets forever, AND exclude sets offered-but-not-purchased
-      // within the re-offer cooldown (ppv_reoffer_days) — an unpurchased set only
-      // becomes re-offerable after the cooldown elapses (item 18).
       if (connection && fan) await reconcilePurchases(base44, connection, fan, sentTracking);
-      const purchasedSetIds = new Set(sentTracking.filter((t: any) => t.purchased === true).map((t: any) => t.content_set_id));
-      const reofferMs = Math.max(settings.ppv_reoffer_days ?? 2, 0) * 86400000;
-      const nowMs = Date.now();
-      const recentOfferedSetIds = new Set(
-        sentTracking
-          .filter((t: any) => !t.purchased && t.sent_at && (nowMs - new Date(t.sent_at).getTime()) < reofferMs)
-          .map((t: any) => t.content_set_id)
-      );
-      availableSets = contentSets.filter((s: any) => !purchasedSetIds.has(s.id) && !recentOfferedSetIds.has(s.id));
-      setCatalogStr = availableSets.length > 0
-        ? availableSets.map((s: any) => {
-            const tags = Array.isArray(s.tags) && s.tags.length ? s.tags.join(", ") : "";
-            return `id: ${s.id} | name: "${s.name}" | tags: ${tags || "(none)"} | description: ${s.description || s.name} | suggested_price: $${((s.suggested_price_cents || 1200) / 100).toFixed(2)}`;
-          }).join("\n")
-        : "(no curated sets available — do NOT offer PPV this turn; you have nothing locked to send)";
+
+      if (ppvSource === "auto_vault") {
+        // --- AUTOMATIC VAULT MODE (zero manual approval) ---
+        // Load approved folders, then their synced media excluding anything
+        // already sent to this fan so a fan never receives the same locked
+        // media twice. Expose the FOLDER catalog to the AI; the backend picks
+        // the exact unseen media items after the AI chooses a folder.
+        let folders = (await base44.asServiceRole.entities.VaultFolder.filter({ creator_profile_id: creatorProfileId }, "created_date", 200)) || [];
+        const allowList = Array.isArray(settings.vault_allowed_folder_names) ? settings.vault_allowed_folder_names : [];
+        if (allowList.length > 0) {
+          folders = folders.filter((f: any) => allowList.includes(f.folder_name));
+        } else {
+          const approved = folders.filter((f: any) => f.approved);
+          folders = approved.length > 0 ? approved : folders;
+        }
+        const sentMediaUuids = new Set<string>();
+        for (const t of sentTracking) (t.media_uuids || []).forEach((u: string) => sentMediaUuids.add(u));
+        const eligibleFolderNames = new Set(folders.map((f: any) => f.folder_name));
+        const vaultMedia = (await base44.asServiceRole.entities.VaultMedia.filter({ creator_profile_id: creatorProfileId }, "created_date", 1000)) || [];
+        const byFolder: Record<string, any[]> = {};
+        for (const m of vaultMedia) {
+          if (!eligibleFolderNames.has(m.folder_name)) continue;
+          if (m.status && m.status !== "ready") continue;
+          if (sentMediaUuids.has(m.external_uuid)) continue;
+          (byFolder[m.folder_name] = byFolder[m.folder_name] || []).push(m);
+        }
+        vaultMediaByFolder = byFolder;
+        availableVaultFolders = folders.filter((f: any) => (byFolder[f.folder_name] || []).length > 0);
+        setCatalogStr = availableVaultFolders.length > 0
+          ? availableVaultFolders.map((f: any) => {
+              const items = byFolder[f.folder_name] || [];
+              const videos = items.filter((m: any) => m.content_type === "video").length;
+              const imgs = items.length - videos;
+              return `folder: "${f.folder_name}" | unseen: ${items.length} (${imgs} photo${imgs === 1 ? "" : "s"}${videos ? `, ${videos} video${videos === 1 ? "" : "s"}` : ""})`;
+            }).join("\n")
+          : "(no approved vault folders with unseen media — do NOT offer PPV this turn; sync the vault or approve folders on the PPV Content page)";
+      } else {
+        // --- CURATED SETS MODE ---
+        const allSets = await base44.asServiceRole.entities.PpvContentSet.filter({ creator_profile_id: creatorProfileId, active: true }, "created_date", 50);
+        contentSets = allSets || [];
+        const purchasedSetIds = new Set(sentTracking.filter((t: any) => t.purchased === true).map((t: any) => t.content_set_id));
+        const reofferMs = Math.max(settings.ppv_reoffer_days ?? 2, 0) * 86400000;
+        const nowMs = Date.now();
+        const recentOfferedSetIds = new Set(
+          sentTracking
+            .filter((t: any) => !t.purchased && t.sent_at && (nowMs - new Date(t.sent_at).getTime()) < reofferMs)
+            .map((t: any) => t.content_set_id)
+        );
+        availableSets = contentSets.filter((s: any) => !purchasedSetIds.has(s.id) && !recentOfferedSetIds.has(s.id));
+        setCatalogStr = availableSets.length > 0
+          ? availableSets.map((s: any) => {
+              const tags = Array.isArray(s.tags) && s.tags.length ? s.tags.join(", ") : "";
+              return `id: ${s.id} | name: "${s.name}" | tags: ${tags || "(none)"} | description: ${s.description || s.name} | suggested_price: $${((s.suggested_price_cents || 1200) / 100).toFixed(2)}`;
+            }).join("\n")
+          : "(no curated sets available — do NOT offer PPV this turn; you have nothing locked to send)";
+      }
     }
 
     // Inject conversation continuity context
@@ -651,7 +691,7 @@ BANNED RECENT QUESTIONS (do NOT re-ask these or anything close — vary the angl
 ${bannedQuestionsStr}
 
 SALES CONTEXT:
-${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — the system sets the price and attaches the locked content automatically.\n- Valid price rungs (internal, never spoken): ${ladderStr}\n- CONTENT SETS (curated locked bundles — choose the ONE that best matches the fan's request and put its id in chosen_set_id; the system attaches its media and sets the price). Match the fan's words to a set's TAGS first, then its DESCRIPTION.\n${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
+${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — the system sets the price and attaches the locked content automatically.\n- Valid price rungs (internal, never spoken): ${ladderStr}\n- ${catalogInstructions}\n${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
 
 RECENT CONVERSATION (oldest to newest):
 ${conversationContext || "No prior messages."}
@@ -677,10 +717,24 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
 
     // Grok-3-latest is the only model used (no mini escalation) — persona-authority replies.
 
-    // === Resolve curated content set chosen by the AI ===
+    // === Resolve the AI's PPV choice (curated set OR vault folder) ===
     let chosenSet: any = null;
-    if (ppvAllowed && aiResult.chosen_set_id) {
-      chosenSet = availableSets.find((s: any) => s.id === aiResult.chosen_set_id) || null;
+    let chosenFolder: string | null = null;
+    let vaultMediaForOffer: string[] = [];
+    if (ppvAllowed) {
+      if (ppvSource === "auto_vault") {
+        if (aiResult.chosen_folder) {
+          const folderName = String(aiResult.chosen_folder).trim();
+          if (availableVaultFolders.some((f: any) => f.folder_name === folderName)) {
+            const pool = vaultMediaByFolder[folderName] || [];
+            const limit = Math.max(Math.min(settings.vault_media_per_offer ?? 3, 5), 1);
+            vaultMediaForOffer = pool.slice(0, limit).map((m: any) => m.external_uuid);
+            if (vaultMediaForOffer.length > 0) chosenFolder = folderName;
+          }
+        }
+      } else if (aiResult.chosen_set_id) {
+        chosenSet = availableSets.find((s: any) => s.id === aiResult.chosen_set_id) || null;
+      }
     }
 
     // Normalize to an array of single-line bubbles (no line breaks inside a bubble)
@@ -857,17 +911,25 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         }
       }
 
-      // === PPV LOCKING: attach the curated content set so content is locked ===
+      // === PPV LOCKING: attach locked media (curated set OR auto-vault) ===
       let mediaForSend: any = null;
       let attachedMediaUuids: string[] = [];
       let chosenSetId: string | null = null;
+      let offerSource: "set" | "vault" = "set";
+      let offerFolder: string | null = null;
       if (ppvCents && ppvCents > 0) {
-        // Use the AI-chosen set, or fall back to the first available set if the
-        // AI offered a PPV but didn't pick one (e.g. 3-strike force path).
-        const setToAttach = chosenSet || null;
-        if (setToAttach && Array.isArray(setToAttach.media_uuids) && setToAttach.media_uuids.length > 0) {
-          attachedMediaUuids = setToAttach.media_uuids.slice(0, 5);
-          chosenSetId = setToAttach.id;
+        let mediaUuidsToAttach: string[] = [];
+        if (ppvSource === "auto_vault" && chosenFolder && vaultMediaForOffer.length > 0) {
+          mediaUuidsToAttach = vaultMediaForOffer;
+          offerSource = "vault";
+          offerFolder = chosenFolder;
+        } else if (chosenSet && Array.isArray(chosenSet.media_uuids) && chosenSet.media_uuids.length > 0) {
+          mediaUuidsToAttach = chosenSet.media_uuids.slice(0, 5);
+          chosenSetId = chosenSet.id;
+          offerSource = "set";
+        }
+        if (mediaUuidsToAttach.length > 0) {
+          attachedMediaUuids = mediaUuidsToAttach;
           mediaForSend = {
             mediaUuids: attachedMediaUuids,
             mediaPreviewUuid: attachedMediaUuids[0],
@@ -877,17 +939,19 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
             ppv_offer_count: (conversation.ppv_offer_count || 0) + 1,
           });
         } else {
-          // No curated content set available — Fanvue rejects PPV sends with no
-          // media, so downgrade to a free message and warn the operator that the
-          // content library is empty. Without this, PPV offers silently vanish.
+          // No locked media available — Fanvue rejects PPV sends with no media,
+          // so downgrade to a free message and warn the operator. Without this,
+          // PPV offers silently vanish.
           ppvCents = null;
           await base44.asServiceRole.entities.ActivityLog.create({
             creator_profile_id: creatorProfileId,
             conversation_id: conversationId,
-            event_type: "ai.ppv_no_set_downgrade",
+            event_type: "ai.ppv_no_media_downgrade",
             status: "warning",
-            message: `PPV offer downgraded to free message — no active curated content sets for this creator. Add sets on the PPV Content page.`,
-            metadata: { job_id: job.id },
+            message: ppvSource === "auto_vault"
+              ? `PPV offer downgraded to free message — no unseen vault media in approved folders for this fan. Sync the vault or approve more folders.`
+              : `PPV offer downgraded to free message — no active curated content sets for this creator. Add sets on the PPV Content page.`,
+            metadata: { job_id: job.id, ppv_source: ppvSource },
           });
         }
       }
@@ -944,10 +1008,10 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         attached_media_uuids: attachedMediaUuids,
       });
 
-      // Record which curated set was sent to this fan so it can be excluded
-      // on the next offer (the fan progresses through the library, never
-      // receiving the same locked bundle twice).
-      if (ppvCents && chosenSetId) {
+      // Record this offer so the attached media can be excluded on the next
+      // turn (the fan progresses through the library, never receiving the
+      // same locked media twice). Works for both curated sets and auto-vault.
+      if (ppvCents && (chosenSetId || (offerSource === "vault" && attachedMediaUuids.length > 0))) {
         try {
           await base44.asServiceRole.entities.PpvOfferTracking.create({
             creator_profile_id: creatorProfileId,
@@ -955,6 +1019,9 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
             conversation_id: conversationId,
             content_set_id: chosenSetId,
             message_id: lastSentMsgUuid,
+            media_uuids: attachedMediaUuids,
+            source: offerSource,
+            folder_name: offerFolder,
             sent_at: new Date().toISOString(),
             price_cents: ppvCents,
             purchased: false,

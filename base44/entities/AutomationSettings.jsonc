@@ -75,6 +75,28 @@
       "default": 2,
       "description": "Days to wait before re-offering an unpurchased content set to the same fan"
     },
+    "ppv_source": {
+      "type": "string",
+      "enum": [
+        "curated_sets",
+        "auto_vault"
+      ],
+      "default": "curated_sets",
+      "description": "curated_sets = operator-built PpvContentSet bundles; auto_vault = AI picks a folder, backend auto-attaches unseen synced vault media from approved folders (zero manual approval)"
+    },
+    "vault_allowed_folder_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Vault folders the AI may select from in auto_vault mode. Empty = all synced folders allowed."
+    },
+    "vault_media_per_offer": {
+      "type": "integer",
+      "default": 3,
+      "description": "Max number of unseen media items to attach per auto-vault PPV offer"
+    },
     "reengagement_enabled": {
       "type": "boolean",
       "default": false
