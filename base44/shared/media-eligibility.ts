@@ -10,25 +10,46 @@
 /**
  * Parse a raw Fanvue media object into the normalized access state.
  *
- * LOCKED   = positively confirmed paid/paywalled (price > 0).
- * UNKNOWN  = isLocked flag set but no confirmed price (conservative: ineligible).
- * FREE     = no paywall, no lock (the fan can view it without paying).
+ * FANVUE VAULT REALITY: the vault media endpoint returns the creator's PRIVATE
+ * library. It exposes NO per-item lock flag and NO paywall price — only an
+ * optional `recommendedPrice` (the creator's suggested price, often null). A
+ * media item only becomes "free" or "locked" to a FAN when it is SENT (as a
+ * free message or a PPV-priced message). So from the fan's perspective ALL
+ * vault library items are private/unsold — none of it is "free" while it sits
+ * in the vault.
  *
- * eligible_for_paid_ppv is true ONLY when accessState === LOCKED && isAvailable.
+ * Therefore the eligibility model is:
+ *  - An explicit free signal (isLocked=false with no price) → FREE, ineligible.
+ *  - A confirmed price > 0 or isLocked=true → LOCKED, eligible if available.
+ *  - No signal at all (the common vault case) → LOCKED (private library),
+ *    eligible when available. The operator's folder-approval gate + the
+ *    per-fan sent-media dedup (PpvOfferTracking) are what keep already-
+ *    delivered or non-sellable content out of offers — NOT this flag.
+ *
+ * This keeps the user's invariant intact: content the fan already received
+ * free is never re-sold, because the AI candidate pool excludes every media
+ * UUID already in PpvOfferTracking for that fan.
  */
 export function parseAccessState(item) {
-  const priceCents = Number(item?.pricing?.USD?.price ?? item?.priceCents ?? item?.price_cents ?? 0) || 0;
+  const priceCents = Number(
+    item?.pricing?.USD?.price ??
+    item?.priceCents ??
+    item?.price_cents ??
+    item?.recommendedPrice?.USD ??
+    item?.recommendedPrice?.price ??
+    (typeof item?.recommendedPrice === "number" ? item.recommendedPrice : 0)
+  ) || 0;
   const isLocked = item?.isLocked === true || item?.is_locked === true;
+  const isExplicitlyFree = (item?.isLocked === false || item?.is_locked === false) && priceCents === 0;
   const statusRaw = String(item?.status || "ready").toLowerCase();
   const isAvailable = statusRaw === "ready" || statusRaw === "";
 
   let accessState;
-  if (priceCents > 0) {
-    accessState = "LOCKED";
-  } else if (isLocked) {
-    accessState = "UNKNOWN";
-  } else {
+  if (isExplicitlyFree) {
     accessState = "FREE";
+  } else {
+    // Confirmed price, explicit lock, OR no signal at all (private library) → LOCKED.
+    accessState = "LOCKED";
   }
   const eligibleForPaidPpv = accessState === "LOCKED" && isAvailable;
   return { priceCents, isLocked, isAvailable, accessState, eligibleForPaidPpv };
