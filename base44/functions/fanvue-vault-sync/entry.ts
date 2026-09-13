@@ -2,17 +2,23 @@
 // VaultFolder + VaultMedia entities so the automatic-vault PPV engine can
 // select unseen media without re-fetching the whole vault per fan message.
 //
+// CRITICAL: every synced VaultMedia row is normalized with access_state +
+// eligible_for_paid_ppv. FREE / UNKNOWN / unavailable media are marked
+// ineligible so the PPV engine behaves as if they do not exist. A media item
+// that changes from locked → free between syncs becomes immediately ineligible.
+//
 // Auth: any authenticated user (me() gate). Writes use asServiceRole so org-
 // shared connection records (not owned by the caller) are readable.
 // Capped at MAX_ITEMS per run to stay within function timeouts; re-run to
 // continue. Existing VaultFolder.approved flags are preserved across re-sync.
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { getValidAccessToken, getMedia } from "../../shared/fanvue-api.ts";
+import { parseAccessState } from "../../shared/media-eligibility.ts";
 
 const MAX_ITEMS = 500;
 const CHUNK = 100;
 
-function extractThumb(item: any): string {
+function extractThumb(item) {
   const variants = Array.isArray(item.variants) ? item.variants : [];
   const v =
     variants.find((x) => x.variantType === "thumbnail") ||
@@ -23,14 +29,14 @@ function extractThumb(item: any): string {
   return item.thumbnailUrl || item.thumbnail_url || item.previewUrl || item.url || "";
 }
 
-function contentTypeOf(item: any): "image" | "video" {
+function contentTypeOf(item) {
   const t = String(item.type || item.mediaType || "").toLowerCase();
   return t.includes("video") ? "video" : "image";
 }
 
-export default async function (req: Request): Promise<Response> {
+export default async function (req) {
   const base44 = createClientFromRequest(req);
-  let body: any = {};
+  let body = {};
   try { body = await req.json().catch(() => ({})); } catch (e) {}
 
   try {
@@ -38,7 +44,7 @@ export default async function (req: Request): Promise<Response> {
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
     const requestedCreatorId = body.creatorProfileId;
-    let connection: any;
+    let connection;
     if (requestedCreatorId) {
       const conns = await base44.entities.FanvueConnection.filter({ creator_profile_id: requestedCreatorId, status: "connected" }, "-created_date", 1);
       connection = conns[0];
@@ -58,32 +64,41 @@ export default async function (req: Request): Promise<Response> {
 
     // Preserve existing approved flags so re-sync doesn't wipe the allow-list.
     const existingFolders = await base44.asServiceRole.entities.VaultFolder.filter({ creator_profile_id: creatorProfileId }, "created_date", 200);
-    const approvedByName = new Map((existingFolders || []).map((f: any) => [f.folder_name, !!f.approved]));
+    const approvedByName = new Map((existingFolders || []).map((f) => [f.folder_name, !!f.approved]));
 
-    // Existing media UUIDs → only insert new ones, update stale thumbs/titles.
+    // Existing media UUIDs → update eligibility on every re-sync (a media item
+    // may have changed from locked → free in Fanvue, which must make it
+    // immediately ineligible for PPV).
     const existingMedia = await base44.asServiceRole.entities.VaultMedia.filter({ creator_profile_id: creatorProfileId }, "created_date", 1000);
-    const mediaByUuid = new Map((existingMedia || []).map((m: any) => [m.external_uuid, m]));
+    const mediaByUuid = new Map((existingMedia || []).map((m) => [m.external_uuid, m]));
 
-    const folderCounts: Record<string, number> = {};
-    let cursor: string | null = null;
+    const folderCounts = {}; // total media per folder
+    const folderEligible = {}; // eligible (locked) media per folder
+    let cursor = null;
     let total = 0;
     let pages = 0;
+    let eligibleTotal = 0;
     const syncedAt = new Date().toISOString();
 
     while (total < MAX_ITEMS && pages < 20) {
-      const res: any = await getMedia(accessToken, { cursor, size: 50 });
+      const res = await getMedia(accessToken, { cursor, size: 50 });
       const items = res?.data || [];
       if (!items.length) break;
-      const toCreate: any[] = [];
-      const toUpdate: any[] = [];
+      const toCreate = [];
+      const toUpdate = [];
       for (const item of items) {
         const uuid = item.uuid || item.id;
         if (!uuid) continue;
         const folderName = item.folderName || item.folder_name || "Default";
         folderCounts[folderName] = (folderCounts[folderName] || 0) + 1;
         const thumb = extractThumb(item);
-        const main = (Array.isArray(item.variants) ? item.variants.find((v: any) => v.variantType === "main")?.url : null) || thumb;
+        const main = (Array.isArray(item.variants) ? item.variants.find((v) => v.variantType === "main")?.url : null) || thumb;
         const ct = contentTypeOf(item);
+        const parsed = parseAccessState(item);
+        if (parsed.eligibleForPaidPpv) {
+          folderEligible[folderName] = (folderEligible[folderName] || 0) + 1;
+          eligibleTotal++;
+        }
         const existing = mediaByUuid.get(uuid);
         if (existing && existing.id) {
           const changed =
@@ -91,7 +106,11 @@ export default async function (req: Request): Promise<Response> {
             existing.thumbnail_url !== thumb ||
             existing.main_url !== main ||
             existing.title !== (item.title || existing.title) ||
-            existing.status !== (item.status || existing.status || "ready");
+            existing.status !== (item.status || existing.status || "ready") ||
+            existing.access_state !== parsed.accessState ||
+            existing.eligible_for_paid_ppv !== parsed.eligibleForPaidPpv ||
+            existing.price_cents !== parsed.priceCents ||
+            existing.is_available !== parsed.isAvailable;
           if (changed) {
             toUpdate.push({
               id: existing.id,
@@ -102,6 +121,10 @@ export default async function (req: Request): Promise<Response> {
               main_url: main,
               status: item.status || existing.status || "ready",
               duration_seconds: item.duration ?? existing.duration_seconds,
+              price_cents: parsed.priceCents,
+              access_state: parsed.accessState,
+              is_available: parsed.isAvailable,
+              eligible_for_paid_ppv: parsed.eligibleForPaidPpv,
               synced_at: syncedAt,
             });
           }
@@ -116,10 +139,14 @@ export default async function (req: Request): Promise<Response> {
             main_url: main,
             status: item.status || "ready",
             duration_seconds: item.duration ?? null,
+            price_cents: parsed.priceCents,
+            access_state: parsed.accessState,
+            is_available: parsed.isAvailable,
+            eligible_for_paid_ppv: parsed.eligibleForPaidPpv,
             synced_at: syncedAt,
           });
         }
-        mediaByUuid.set(uuid, true as any);
+        mediaByUuid.set(uuid, true);
         total++;
       }
       for (let i = 0; i < toCreate.length; i += CHUNK) {
@@ -135,7 +162,7 @@ export default async function (req: Request): Promise<Response> {
 
     // Upsert folders with counts, preserving approved flags.
     const folderUpserts = Object.entries(folderCounts).map(([name, count]) => {
-      const existing = existingFolders.find((f: any) => f.folder_name === name);
+      const existing = existingFolders.find((f) => f.folder_name === name);
       if (existing) {
         return base44.asServiceRole.entities.VaultFolder.update(existing.id, {
           media_count: count,
@@ -165,18 +192,19 @@ export default async function (req: Request): Promise<Response> {
       creator_profile_id: creatorProfileId,
       event_type: "vault.sync",
       status: "success",
-      message: `Vault sync: ${total} media across ${Object.keys(folderCounts).length} folder(s)`,
-      metadata: { total, folders: Object.keys(folderCounts), pages },
+      message: `Vault sync: ${total} media (${eligibleTotal} PPV-eligible) across ${Object.keys(folderCounts).length} folder(s)`,
+      metadata: { total, eligible: eligibleTotal, folders: Object.keys(folderCounts), pages },
     });
 
     return Response.json({
       success: true,
       mediaSynced: total,
-      folders: Object.entries(folderCounts).map(([name, count]) => ({ folder_name: name, media_count: count })),
+      eligibleMedia: eligibleTotal,
+      folders: Object.entries(folderCounts).map(([name, count]) => ({ folder_name: name, media_count: count, eligible_count: folderEligible[name] || 0 })),
       moreAvailable: !!cursor,
     });
   } catch (error) {
-    const msg = (error as any).message || "";
+    const msg = (error)?.message || "";
     if (msg.includes("403") || msg.toLowerCase().includes("insufficient scopes") || msg.includes("age_verification")) {
       return Response.json({
         error: msg.includes("age_verification") ? "Age verification required for media access" : "Insufficient scopes — reconnect Fanvue to grant read:media",

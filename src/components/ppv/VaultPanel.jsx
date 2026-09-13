@@ -26,10 +26,18 @@ export default function VaultPanel() {
         base44.entities.VaultFolder.filter({ creator_profile_id: creatorId }, "created_date", 200),
         base44.entities.VaultMedia.filter({ creator_profile_id: creatorId }, "created_date", 200),
       ]);
-      const sorted = (folderList || []).slice().sort((a, b) => (b.media_count || 0) - (a.media_count || 0));
+      const eligibleMedia = (mediaList || []).filter((m) => m.eligible_for_paid_ppv === true);
+      // Per-folder eligible (locked) counts — folder media_count is the TOTAL
+      // vault count; the PPV view counts ONLY locked content. Free media is
+      // completely excluded from this view and from all counts.
+      const eligibleByFolder = {};
+      for (const m of eligibleMedia) eligibleByFolder[m.folder_name] = (eligibleByFolder[m.folder_name] || 0) + 1;
+      const sorted = (folderList || [])
+        .map((f) => ({ ...f, eligible_count: eligibleByFolder[f.folder_name] || 0 }))
+        .sort((a, b) => (b.eligible_count || 0) - (a.eligible_count || 0));
       setFolders(sorted);
-      setMedia(mediaList || []);
-      if (!activeFolder && sorted.length > 0) setActiveFolder(sorted[0].folder_name);
+      setMedia(eligibleMedia);
+      if (!activeFolder && sorted.length > 0 && sorted[0].eligible_count > 0) setActiveFolder(sorted[0].folder_name);
     } catch (e) {
       setFolders([]); setMedia([]);
     } finally {
@@ -77,15 +85,15 @@ export default function VaultPanel() {
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b border-border px-6 py-3">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <Folder className="h-3.5 w-3.5 text-warning" />
-            {folders.length} folder{folders.length === 1 ? "" : "s"}
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-warning" />
+            <h2 className="font-heading text-lg text-foreground">Automatic PPV Media</h2>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Locked content only</span>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            Eligible locked media: <strong className="text-foreground">{media.length}</strong> · {folders.length} folder{folders.length === 1 ? "" : "s"} · {approvedCount} approved
           </span>
-          <span>·</span>
-          <span>{approvedCount} approved</span>
-          <span>·</span>
-          <span>{media.length} media synced</span>
         </div>
         <button
           onClick={handleSync}
@@ -132,7 +140,7 @@ export default function VaultPanel() {
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-foreground">{f.folder_name}</span>
-                  <span className="text-xs text-muted-foreground">{f.media_count || 0} media</span>
+                  <span className="text-xs text-muted-foreground">{f.eligible_count || 0} locked item{(f.eligible_count || 0) === 1 ? "" : "s"}</span>
                 </span>
                 <span
                   onClick={(e) => { e.stopPropagation(); toggleApproved(f); }}
@@ -152,10 +160,10 @@ export default function VaultPanel() {
             <div className="mb-3 flex items-center gap-2">
               <Lock className="h-4 w-4 text-warning" />
               <span className="text-sm font-medium text-foreground">{activeFolder || "Select a folder"}</span>
-              <span className="text-xs text-muted-foreground">{visibleMedia.length} media</span>
+              <span className="text-xs text-muted-foreground">{visibleMedia.length} locked item{visibleMedia.length === 1 ? "" : "s"}</span>
             </div>
             {visibleMedia.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">No media in this folder.</p>
+              <p className="py-8 text-center text-sm text-muted-foreground">No locked PPV-eligible media in this folder — free content is hidden from automatic PPV.</p>
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                 {visibleMedia.map((m) => {

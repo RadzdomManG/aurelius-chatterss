@@ -47,7 +47,77 @@
       "format": "date-time"
     },
     "price_cents": {
-      "type": "integer"
+      "type": "integer",
+      "description": "The actual price sent to the fan for THIS record. For a base offer this is the base price; for a rescue record this is the discounted price."
+    },
+    "offer_type": {
+      "type": "string",
+      "enum": [
+        "base",
+        "rescue"
+      ],
+      "default": "base",
+      "description": "base = the original full-price PPV offer; rescue = the discounted re-offer of the same content."
+    },
+    "parent_offer_id": {
+      "type": "string",
+      "description": "For rescue offers, the id of the base PpvOfferTracking this rescues. null for base offers."
+    },
+    "base_price_cents": {
+      "type": "integer",
+      "description": "The original base price (present on both base and rescue records for ladder logic)."
+    },
+    "ladder_level": {
+      "type": "integer",
+      "description": "The fan's ladder level at the time this base offer was sent."
+    },
+    "rescue_eligible": {
+      "type": "boolean",
+      "default": true,
+      "description": "True when a rescue may be scheduled for this base offer."
+    },
+    "rescue_price_cents": {
+      "type": "integer",
+      "description": "The discounted price for the rescue offer (base_price - rescue_discount). May be below $12 down to $7."
+    },
+    "rescue_scheduled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the rescue is due to fire (base sent time + random 5-10 min)."
+    },
+    "rescue_sent_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rescue_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "pending",
+        "cancelled",
+        "sent",
+        "purchased",
+        "failed"
+      ],
+      "default": "none",
+      "description": "Lifecycle of the rescue for this base offer. none = no rescue scheduled; pending = waiting for the timer; cancelled = fan purchased base or offer superseded; sent = rescue delivered; purchased = rescue was bought; failed = rescue sent but not purchased and cycle closed."
+    },
+    "base_status": {
+      "type": "string",
+      "enum": [
+        "sent",
+        "purchased",
+        "failed"
+      ],
+      "default": "sent"
+    },
+    "purchase_type": {
+      "type": "string",
+      "enum": [
+        "base",
+        "rescue"
+      ],
+      "description": "Which offer the fan actually purchased (set when purchased=true)."
     },
     "purchased": {
       "type": "boolean",

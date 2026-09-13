@@ -42,16 +42,17 @@
         "type": "integer"
       },
       "default": [
-        1000,
         1200,
         1500,
         2500,
         5000,
-        10000,
-        20000,
+        8000,
+        15000,
+        25000,
         30000,
         40000
-      ]
+      ],
+      "description": "Official base PPV ladder in cents: $12, $15, $25, $50, $80, $150, $250, $300, $400. Minimum rung is $12 (1200); maximum is $400 (40000). Rescue offers may go below $12 down to $7."
     },
     "default_media_uuid": {
       "type": "string",
@@ -96,6 +97,26 @@
       "type": "integer",
       "default": 3,
       "description": "Max number of unseen media items to attach per auto-vault PPV offer"
+    },
+    "rescue_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true, an unpurchased base PPV is automatically re-offered once at a -$5 discount after a random 5-10 minute delay."
+    },
+    "rescue_discount_cents": {
+      "type": "integer",
+      "default": 500,
+      "description": "Discount applied to the base price for the rescue offer (default $5 = 500 cents). Rescue prices may go below the $12 base floor but never below $7."
+    },
+    "rescue_min_delay_minutes": {
+      "type": "integer",
+      "default": 5,
+      "description": "Minimum random delay before a rescue offer is sent."
+    },
+    "rescue_max_delay_minutes": {
+      "type": "integer",
+      "default": 10,
+      "description": "Maximum random delay before a rescue offer is sent."
     },
     "reengagement_enabled": {
       "type": "boolean",

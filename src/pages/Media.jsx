@@ -230,9 +230,9 @@ function MediaCard({ item }) {
           </div>
         )}
         {isPpv && (
-          <div className="absolute right-2 top-2">
-            <StatusBadge variant="warning" label="PPV" />
-          </div>
+        <div className="absolute right-2 top-2">
+          <StatusBadge variant="warning" label="Locked" />
+        </div>
         )}
         {status !== "ready" && (
           <div className="absolute left-2 top-2">
@@ -245,12 +245,12 @@ function MediaCard({ item }) {
         <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
           {isPpv ? (
               <span className="inline-flex items-center gap-1 text-warning">
-                <DollarSign className="h-3 w-3" />
-                {(getMediaPriceCents(item) / 100).toFixed(2)}
+                <Lock className="h-3 w-3" />
+                Locked · ${(getMediaPriceCents(item) / 100).toFixed(2)}
               </span>
             ) : (
-            <span className="inline-flex items-center gap-1">
-              <Lock className="h-3 w-3" /> Free
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              Free
             </span>
           )}
           {item.purchaseCount > 0 && (

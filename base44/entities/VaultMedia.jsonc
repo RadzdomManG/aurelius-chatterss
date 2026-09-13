@@ -39,6 +39,31 @@
     "duration_seconds": {
       "type": "number"
     },
+    "price_cents": {
+      "type": "integer",
+      "default": 0,
+      "description": "The media's own vault price in cents (from Fanvue pricing.USD.price or priceCents). 0 = no paywall on the media itself."
+    },
+    "access_state": {
+      "type": "string",
+      "enum": [
+        "LOCKED",
+        "FREE",
+        "UNKNOWN"
+      ],
+      "default": "FREE",
+      "description": "Normalized Fanvue media access state. LOCKED = positively confirmed paid/paywalled content (price > 0). FREE = no paywall. UNKNOWN = isLocked but no confirmed price. Only LOCKED is PPV-eligible."
+    },
+    "is_available": {
+      "type": "boolean",
+      "default": true,
+      "description": "False when the media is deleted, processing, or otherwise unavailable (status !== ready)."
+    },
+    "eligible_for_paid_ppv": {
+      "type": "boolean",
+      "default": false,
+      "description": "THE single source of truth for PPV candidacy. True ONLY when access_state=LOCKED AND is_available. Free, unknown, and unavailable media are ALWAYS false. The automatic PPV engine must behave as if false media does not exist."
+    },
     "synced_at": {
       "type": "string",
       "format": "date-time"

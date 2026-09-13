@@ -1,7 +1,10 @@
-import { getValidAccessToken, sendFanvueMessage, apiCall } from "./fanvue-api.ts";
+import { getValidAccessToken, sendFanvueMessage } from "./fanvue-api.ts";
 import { callGrok } from "./grok-client.ts";
 import { isPaused } from "./app-config.ts";
 import { toCode } from "./error-catalog.ts";
+import { getEnabledLadder, levelToCents, isValidBasePrice, rescuePriceFor } from "./ppv-ladder.ts";
+import { validateMediaForPpv } from "./media-eligibility.ts";
+import { reconcileFanPpv, applyFailedCycleDrop } from "./ppv-reconcile.ts";
 
 /**
  * Server-side AI processor — the single canonical automation engine.
@@ -23,32 +26,9 @@ import { toCode } from "./error-catalog.ts";
  * - Conversation context persistence: last_topic, open_loops, rapport, sales_stage.
  */
 
-// ---- PPV price ladder ($10 floor → $400 ceiling, laddering pricing) ----
-const PPV_LADDER_CENTS = [1000, 1200, 1500, 2500, 5000, 10000, 20000, 30000, 40000];
-const PPV_MIN_CENTS = 1000;
-
-function getEnabledLadder(settings: any): number[] {
-  let enabled = Array.isArray(settings.ppv_ladder_enabled) ? settings.ppv_ladder_enabled : PPV_LADDER_CENTS;
-  enabled = enabled.map(Number).filter((c) => Number.isFinite(c) && c >= PPV_MIN_CENTS);
-  if (!enabled.length) enabled = [PPV_MIN_CENTS];
-  return enabled.sort((a, b) => a - b);
-}
-
-function validatePpvCents(suggested: number, settings: any): number | null {
-  if (!suggested || suggested <= 0) return null;
-  const enabled = getEnabledLadder(settings);
-  let best = enabled[0];
-  let bestDiff = Math.abs(suggested - best);
-  for (const c of enabled) {
-    const d = Math.abs(suggested - c);
-    if (d < bestDiff) { best = c; bestDiff = d; }
-  }
-  if (settings.max_ppv_cents && best > settings.max_ppv_cents) {
-    const under = enabled.filter((c) => c <= settings.max_ppv_cents);
-    best = under.length ? under[under.length - 1] : null;
-  }
-  return best;
-}
+// The canonical PPV ladder + rescue pricing now live in ./ppv-ladder.ts.
+// Base ladder: $12/$15/$25/$50/$80/$150/$250/$300/$400. Min base $12, max $400.
+// Rescue offers: base − $5 (floor $7), only one per offer, see ppv-reconcile.ts.
 
 // NOTE: The hardcoded 3-strike explicit-request detector was removed. The
 // active PersonaProfile is now the SOLE authority over when to offer PPV.
@@ -192,44 +172,9 @@ function isPpvOfferAllowed(conversation: any, settings: any, recentMsgs: any[]):
 // (Removed getDefaultPpvMedia — PPV media now comes exclusively from the
 // AI-chosen curated PpvContentSet, never random vault items.)
 
-// ---- Purchase reconciliation ----
-// Best-effort: match this fan's PPV offers to Fanvue spending insights by
-// price + recency and mark matched offers purchased=true. Non-blocking — a
-// Fanvue API failure simply leaves offers unreconciled (still re-offerable).
-async function reconcilePurchases(base44: any, connection: any, fan: any, offers: any[]) {
-  const unreconciled = (offers || []).filter((o: any) => o.purchased !== true);
-  if (unreconciled.length === 0) return;
-  try {
-    const accessToken = await getValidAccessToken(connection, base44);
-    const spendRes: any = await apiCall(
-      `/v1/insights/spending?fanUuid=${encodeURIComponent(fan.external_uuid)}&size=50`,
-      accessToken
-    );
-    const items = Array.isArray(spendRes?.data) ? spendRes.data : Array.isArray(spendRes) ? spendRes : [];
-    const purchases: { amountCents: number; at: number; used: boolean }[] = [];
-    for (const t of items) {
-      const amt = Number(t.amount ?? t.price ?? t.amountCents ?? t.value);
-      const d = t.createdAt || t.created_at || t.date || t.timestamp || t.paidAt;
-      const s = String((t.type ?? t.source ?? t.category ?? t.transactionType) || "").toLowerCase();
-      if (isFinite(amt) && amt > 0 && d && (/ppv|locked|message/.test(s) || !s)) {
-        purchases.push({ amountCents: Math.round(amt), at: new Date(d).getTime(), used: false });
-      }
-    }
-    for (const offer of unreconciled) {
-      const sentAt = new Date(offer.sent_at).getTime();
-      const match = purchases.find((p) => !p.used && p.amountCents === (offer.price_cents || 0) && p.at >= sentAt);
-      if (match) {
-        match.used = true;
-        try {
-          await base44.asServiceRole.entities.PpvOfferTracking.update(offer.id, { purchased: true, purchased_at: new Date(match.at).toISOString() });
-          offer.purchased = true;
-        } catch (e) {}
-      }
-    }
-  } catch (e) {
-    console.error("[ai] purchase reconciliation failed:", (e as any).message);
-  }
-}
+// Purchase reconciliation + ladder state machine now live in ./ppv-reconcile.ts
+// (reconcileFanPpv) so both the AI processor and the rescue poller share one
+// implementation of the advance/keep/drop ladder rules.
 
 // ---- Retry with exponential backoff for Fanvue send ----
 async function sendWithRetry(accessToken: string, fanUuid: string, reply: string, ppvCents: number | null, media: any, maxRetries = 3): Promise<any> {
@@ -575,7 +520,11 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     if (ppvAllowed) {
       const sent = await base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 100);
       sentTracking = sent || [];
-      if (connection && fan) await reconcilePurchases(base44, connection, fan, sentTracking);
+      // Reconcile recent purchases against Fanvue spending insights and
+      // advance/keep/drop the fan's ladder level BEFORE pricing this offer.
+      if (connection && fan) {
+        try { await reconcileFanPpv(base44, connection, fan, settings); } catch (e) { console.error("[ai] reconcileFanPpv failed:", (e as any).message); }
+      }
 
       if (ppvSource === "auto_vault") {
         // --- AUTOMATIC VAULT MODE (zero manual approval) ---
@@ -598,7 +547,10 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
         const byFolder: Record<string, any[]> = {};
         for (const m of vaultMedia) {
           if (!eligibleFolderNames.has(m.folder_name)) continue;
-          if (m.status && m.status !== "ready") continue;
+          // FREE MEDIA IS INVISIBLE TO PPV: only positively-confirmed locked,
+          // available, eligible rows ever enter the AI candidate pool. This
+          // backend filter is the invariant — free media never reaches the LLM.
+          if (m.eligible_for_paid_ppv !== true) continue;
           if (sentMediaUuids.has(m.external_uuid)) continue;
           (byFolder[m.folder_name] = byFolder[m.folder_name] || []).push(m);
         }
@@ -616,6 +568,16 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
         // --- CURATED SETS MODE ---
         const allSets = await base44.asServiceRole.entities.PpvContentSet.filter({ creator_profile_id: creatorProfileId, active: true }, "created_date", 50);
         contentSets = allSets || [];
+        // Audit every curated set against current media eligibility: a set
+        // containing ANY free/unknown/unavailable/missing media item is NOT a
+        // valid PPV candidate and is removed so old sets can't bypass the
+        // free-media rule.
+        const setsEligibleMedia = (await base44.asServiceRole.entities.VaultMedia.filter({ creator_profile_id: creatorProfileId }, "created_date", 1000)) || [];
+        const setsEligibleUuids = new Set(setsEligibleMedia.filter((m: any) => m.eligible_for_paid_ppv === true).map((m: any) => m.external_uuid));
+        contentSets = contentSets.filter((s: any) => {
+          const uuids = Array.isArray(s.media_uuids) ? s.media_uuids : [];
+          return uuids.length > 0 && uuids.every((u: string) => setsEligibleUuids.has(u));
+        });
         const purchasedSetIds = new Set(sentTracking.filter((t: any) => t.purchased === true).map((t: any) => t.content_set_id));
         const reofferMs = Math.max(settings.ppv_reoffer_days ?? 2, 0) * 86400000;
         const nowMs = Date.now();
@@ -789,10 +751,18 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       }
     }
 
-    // === PPV PRICE VALIDATION ===
+    // === PPV PRICE — LADDER AUTHORITY ===
+    // The backend owns the price: the fan's current ladder level determines it.
+    // The AI only chooses the CONTENT; its suggested_ppv_cents is ignored for
+    // pricing. Apply any pending failed-cycle level drop first.
     let ppvCents: number | null = null;
+    let fanLadderLevel = fan?.current_ppv_ladder_level ?? 0;
+    if (ppvAllowed && fan) {
+      try { fanLadderLevel = await applyFailedCycleDrop(base44, fan, settings); } catch (e) {}
+    }
     if (ppvAllowed && aiResult.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
-      ppvCents = validatePpvCents(aiResult.suggested_ppv_cents, settings);
+      ppvCents = levelToCents(fanLadderLevel, settings);
+      if (!isValidBasePrice(ppvCents, settings)) ppvCents = null;
     }
 
     // === ANTI-REPETITION (regenerate once if the reply repeats recent text) ===
@@ -810,7 +780,8 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
           aiResult = regen;
           replies = regenReplies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean);
           if (ppvAllowed && aiResult.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
-            ppvCents = validatePpvCents(aiResult.suggested_ppv_cents, settings);
+            ppvCents = levelToCents(fanLadderLevel, settings);
+            if (!isValidBasePrice(ppvCents, settings)) ppvCents = null;
           }
         }
       } catch (e) {
@@ -818,23 +789,9 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       }
     }
 
-    // === SPEND-BASED DYNAMIC PRICING (item 11) ===
-    // Bump the rung up when this fan unlocks often; lower it when the last
-    // couple of offers went unpurchased. Only adjusts within the enabled ladder.
-    if (ppvCents && sentTracking.length >= 2) {
-      const enabled = getEnabledLadder(settings);
-      const idx = enabled.indexOf(ppvCents);
-      if (idx >= 0) {
-        const purchased = sentTracking.filter((t: any) => t.purchased).length;
-        const recent = sentTracking.slice(-3);
-        const recentPurchased = recent.filter((t: any) => t.purchased).length;
-        if (sentTracking.length >= 3 && purchased / sentTracking.length > 0.5 && idx < enabled.length - 1) {
-          ppvCents = enabled[idx + 1];
-        } else if (recent.length >= 2 && recentPurchased === 0 && idx > 0) {
-          ppvCents = enabled[idx - 1];
-        }
-      }
-    }
+    // (Spend-based dynamic pricing was removed — the ladder + rescue system in
+    // ppv-reconcile.ts now owns all advancement/demotion. The AI never sets the
+    // price; the fan's ladder level does.)
 
     // === RATE LIMIT CHECK ===
     let rateLimited = false;
@@ -956,6 +913,28 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         }
       }
 
+      // === FINAL SEND-TIME MEDIA ELIGIBILITY VALIDATION ===
+      // Re-validate every media UUID against current VaultMedia eligibility.
+      // If ANY item is free/unknown/unavailable/missing, abort the PPV
+      // (downgrade to a free conversational reply) and log
+      // PPV_BLOCKED_UNSAFE_MEDIA. Never expose the failure to the fan.
+      if (ppvCents && ppvCents > 0 && attachedMediaUuids.length > 0) {
+        const eligibility = await validateMediaForPpv(base44, creatorProfileId, attachedMediaUuids);
+        if (!eligibility.ok) {
+          ppvCents = null;
+          mediaForSend = null;
+          attachedMediaUuids = [];
+          await base44.asServiceRole.entities.ActivityLog.create({
+            creator_profile_id: creatorProfileId,
+            conversation_id: conversationId,
+            event_type: "ai.ppv_blocked_unsafe_media",
+            status: "error",
+            message: eligibility.reason || "PPV_BLOCKED_UNSAFE_MEDIA — offer downgraded to free message",
+            metadata: { job_id: job.id, invalid: eligibility.invalid, missing: eligibility.missing },
+          });
+        }
+      }
+
       // === SEND VIA FANVUE WITH RETRY (multi-bubble) ===
       await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "sending", attached_media_uuids: attachedMediaUuids });
 
@@ -1011,7 +990,18 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       // Record this offer so the attached media can be excluded on the next
       // turn (the fan progresses through the library, never receiving the
       // same locked media twice). Works for both curated sets and auto-vault.
+      // Record the BASE offer and schedule the rescue (one discounted re-offer
+      // of the SAME content after a random 5-10 min delay). The rescue poller
+      // (process-rescue-offers workflow) fires it; purchase reconciliation cancels
+      // it if the fan buys the base first.
       if (ppvCents && (chosenSetId || (offerSource === "vault" && attachedMediaUuids.length > 0))) {
+        const baseSentAt = new Date().toISOString();
+        const rescueOn = settings.rescue_enabled !== false;
+        const rescuePrice = rescueOn ? rescuePriceFor(ppvCents) : null;
+        const minDelay = Math.max(settings.rescue_min_delay_minutes ?? 5, 1);
+        const maxDelay = Math.max(settings.rescue_max_delay_minutes ?? 10, minDelay + 1);
+        const delayMs = (minDelay + Math.random() * (maxDelay - minDelay)) * 60 * 1000;
+        const rescueScheduledAt = new Date(Date.now() + delayMs).toISOString();
         try {
           await base44.asServiceRole.entities.PpvOfferTracking.create({
             creator_profile_id: creatorProfileId,
@@ -1022,20 +1012,42 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
             media_uuids: attachedMediaUuids,
             source: offerSource,
             folder_name: offerFolder,
-            sent_at: new Date().toISOString(),
+            sent_at: baseSentAt,
             price_cents: ppvCents,
+            offer_type: "base",
+            base_price_cents: ppvCents,
+            ladder_level: fanLadderLevel,
+            base_status: "sent",
+            rescue_eligible: rescueOn,
+            rescue_price_cents: rescuePrice,
+            rescue_scheduled_at: rescueOn ? rescueScheduledAt : null,
+            rescue_status: rescueOn ? "pending" : "none",
             purchased: false,
+          });
+        } catch (e) {}
+        // Update fan ladder state for the rescue poller + UI.
+        try {
+          await base44.asServiceRole.entities.Fan.update(conversation.fan_id, {
+            last_ppv_sent_at: baseSentAt,
+            last_base_ppv_price_cents: ppvCents,
+            current_ppv_ladder_level: fanLadderLevel,
+            current_base_price_cents: ppvCents,
+            rescue_pending: rescueOn,
+            rescue_scheduled_at: rescueOn ? rescueScheduledAt : null,
           });
         } catch (e) {}
       }
 
+      const rescueInfo = ppvCents && settings.rescue_enabled !== false
+        ? ` — rescue scheduled in ${Math.round((Math.max(settings.rescue_min_delay_minutes ?? 5, 1) + Math.random() * (Math.max(settings.rescue_max_delay_minutes ?? 10, 6) - Math.max(settings.rescue_min_delay_minutes ?? 5, 1))))} min at $${((ppvCents - 500) / 100).toFixed(2)}`
+        : "";
       await base44.asServiceRole.entities.ActivityLog.create({
         creator_profile_id: creatorProfileId,
         conversation_id: conversationId,
-        event_type: "ai.auto_sent",
+        event_type: ppvCents ? "ai.ppv_base_sent" : "ai.auto_sent",
         status: "success",
-        message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV: $${(ppvCents / 100).toFixed(2)}, media locked)` : ""}`,
-        metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
+        message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV base: $${(ppvCents / 100).toFixed(2)}, media locked, level ${fanLadderLevel}${rescueInfo})` : ""}`,
+        metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, ladder_level: fanLadderLevel, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
       });
 
       // Successful send — reset the circuit breaker counter for this creator.

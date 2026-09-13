@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { X, Save, Loader2 } from "lucide-react";
 import VaultPicker from "@/components/inbox/VaultPicker";
 
-const LADDER = [10, 12, 15, 25, 50, 100, 200, 300, 400];
+const LADDER = [12, 15, 25, 50, 80, 150, 250, 300, 400];
 
 export default function PpvSetComposer({ creatorProfileId, set, onClose, onSaved }) {
   const isEdit = !!set;

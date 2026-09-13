@@ -56,6 +56,61 @@
       "type": "string",
       "format": "date-time",
       "description": "Last time the bot auto-greeted this fan on presence \u2014 enforces the per-fan cooldown"
+    },
+    "current_ppv_ladder_level": {
+      "type": "integer",
+      "default": 0,
+      "description": "Index into the creator's PPV ladder (0 = $12 base floor). The backend uses this to price every base PPV offer \u2014 NOT the AI's suggestion. Advanced on full-price purchase, kept on discount purchase, dropped one level when a base+rescue cycle both fail."
+    },
+    "current_base_price_cents": {
+      "type": "integer",
+      "default": 1200,
+      "description": "Snapshot of the fan's current base PPV price in cents (ladder[level]). Denormalized for quick UI display."
+    },
+    "highest_full_price_purchase_cents": {
+      "type": "integer",
+      "default": 0
+    },
+    "highest_discount_purchase_cents": {
+      "type": "integer",
+      "default": 0
+    },
+    "last_base_ppv_price_cents": {
+      "type": "integer"
+    },
+    "last_rescue_price_cents": {
+      "type": "integer"
+    },
+    "last_ppv_sent_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_ppv_purchased_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "consecutive_full_price_purchases": {
+      "type": "integer",
+      "default": 0
+    },
+    "consecutive_failed_offers": {
+      "type": "integer",
+      "default": 0,
+      "description": "Incremented when a base+rescue cycle completes with no purchase. When the next base PPV is sent, one failed cycle drops the fan one ladder level (min $12), then this resets."
+    },
+    "rescue_pending": {
+      "type": "boolean",
+      "default": false,
+      "description": "True while a rescue offer is scheduled but not yet sent/cancelled. Quick filter for the rescue poller."
+    },
+    "rescue_scheduled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the pending rescue for the current offer cycle is due to fire."
+    },
+    "last_rescue_sent_at": {
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [
