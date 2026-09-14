@@ -64,32 +64,51 @@
     },
     {
       "function_name": "copilot-schedule-posts",
-      "description": "Bulk-schedule posts from a specific vault folder across multiple days with AI-generated captions and varied posting times"
+      "description": "Bulk-schedule posts from a vault folder across multiple days with AI captions"
     },
     {
       "function_name": "copilot-unsend-message",
-      "description": "Delete/unsend a message that was sent to a fan in a conversation"
+      "description": "Delete/unsend a message that was sent to a fan"
     },
     {
       "function_name": "copilot-system-check",
-      "description": "Check system health: connections, missing scopes, webhook health, recent errors, automation status, circuit breaker, global pause"
+      "description": "Check system health: connections, scopes, webhook health, errors, automation status"
     },
     {
       "function_name": "copilot-get-analytics",
-      "description": "Fetch Fanvue analytics: earnings summary, subscribers, spending, top spenders for the last N days"
+      "description": "Fetch Fanvue analytics: earnings, subscribers, spending, top spenders"
     },
     {
       "function_name": "copilot-update-settings",
-      "description": "Update automation settings: PPV, rate limits, active hours, rescue, warmup, re-engagement, circuit breaker, etc."
+      "description": "Update automation settings: PPV, rate limits, active hours, rescue, warmup, etc."
     },
     {
       "function_name": "copilot-toggle-automation",
-      "description": "Pause or resume the bot \u2014 per-creator or globally (scope:'global')"
+      "description": "Pause or resume the bot per-creator or globally"
     },
     {
       "function_name": "send-message",
       "description": "Send a direct message to a specific fan by conversation ID"
     }
   ],
+  "context_files": [],
+  "app_user_connector_configs": [],
+  "selected_skill_names": [],
+  "selected_workspace_skill_ids": [],
+  "model": "automatic",
+  "whatsapp_greeting": null,
+  "telegram_greeting": null,
+  "line_greeting": null,
+  "memory_config": {
+    "enabled": true,
+    "scope": "both",
+    "include_other_conversation_context": false,
+    "instructions": null
+  },
+  "voice_config": {
+    "voice_id": null
+  },
+  "emails_settings": null,
+  "allow_anonymous_access": false,
   "name": "copilot"
 }

@@ -41,8 +41,11 @@ export default async function (req: Request): Promise<Response> {
       return Response.json({ error: "creatorProfileId is required (or use scope:'global')" }, { status: 400 });
     }
 
-    const creators = await base44.asServiceRole.entities.CreatorProfile.filter({ id: creatorProfileId }, "-created_date", 1);
-    const creator = creators[0];
+    let creator: any = null;
+    try {
+      const creators = await base44.asServiceRole.entities.CreatorProfile.filter({ id: creatorProfileId }, "-created_date", 1);
+      creator = creators[0];
+    } catch (e) {}
     if (!creator) return Response.json({ error: "Creator not found" }, { status: 404 });
 
     if (action === "pause") {
