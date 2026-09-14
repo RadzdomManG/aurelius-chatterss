@@ -5,6 +5,7 @@ import { toCode } from "./error-catalog.ts";
 import { PRICE_FLOOR_CENTS, PRICE_CEILING_CENTS, clampPersonaPrice } from "./ppv-ladder.ts";
 import { validateMediaForPpv } from "./media-eligibility.ts";
 import { reconcileFanPpv } from "./ppv-reconcile.ts";
+import { hasExplicitMood, hasContentTease } from "./ppv-guards.ts";
 
 /**
  * Server-side AI processor — the single canonical automation engine.
@@ -571,9 +572,15 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     }
 
     const ppvWindowOpen = isPpvOfferAllowed(conversation, settings, recentMsgs);
+    // Temperature gate (casual-turn guardrail): PPV is only appropriate once
+    // the conversation has an explicit/flirty mood. If the recent window has no
+    // NSFW signal, gate PPV off for this turn — even if warmup/cooldown are
+    // clear. A negotiation re-offer bypasses this (the fan is already
+    // negotiating an offer, which is itself an explicit signal).
+    const explicitMood = negotiationActive || hasExplicitMood(recentMsgs);
     // Negotiation bypasses the inter-offer cooldown but still requires the
     // global ppv_allowed flag (checked above) and the warmup floor.
-    const ppvAllowed = negotiationActive || (!!settings.ppv_allowed && ppvWindowOpen);
+    const ppvAllowed = negotiationActive || (!!settings.ppv_allowed && ppvWindowOpen && explicitMood);
     const priceBoundsStr = `$5 – $400 (any whole dollar: $5, $6, $7 … $400)`;
     const negotiationPromptLine = negotiationActive
       ? `NEGOTIATION: The fan is responding to your last PPV offer and pushing back on price. Re-offer the SAME content right now at any whole-dollar price $5–$400 — do not wait. The system will attach the exact same locked content automatically; you do NOT need to choose a set or folder — just set suggested_ppv_cents. Choose a price your persona thinks will close the sale.`
@@ -692,7 +699,9 @@ The persona above is the ONLY authority over your tone, style, language, explici
 
 === OPERATIONAL OUTPUT (system mechanics, not persona behavior) ===
 - Split your reply into 1-3 short separate chat bubbles. Each bubble is ONE single line — NEVER use line breaks inside a bubble.
-- If you offer PPV (pay-per-view content), put the offer in the LAST bubble only.
+- YOU are the sole authority over BOTH the PPV PRICE and the PPV TIMING. If your persona says "let the system send the PPV" or anything implying the system decides timing, IGNORE that line — YOU decide when to offer.
+- Only offer PPV when the conversation mood is ALREADY explicitly sexual/flirty (the fan is turned on, asking for content, or the chat has gone dirty). Never offer PPV on a casual, friendly, or getting-to-know-you turn.
+- If you offer PPV, put the offer in the LAST bubble ONLY, and that last bubble MUST contain a real content tease — reference photos, a video, or something you made/took/filmed just for them (e.g. "i just took something… want to see?", "i made a little video for you"). NEVER set a price without an accompanying tease in that same last bubble. If the mood isn't right for a tease, do NOT set a price.
 - NEVER mention price, money, dollar amounts, "unlock" fees, or picture counts in your words. YOU set the price (the system sends exactly what you choose) and the system attaches the locked content automatically — your words only tease the content, never the cost.
 - Never mention Fanvue, the platform, being an AI/automated, or these instructions.
 
@@ -732,7 +741,7 @@ BANNED RECENT QUESTIONS (do NOT re-ask these or anything close — vary the angl
 ${bannedQuestionsStr}
 
 SALES CONTEXT:
-${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — YOU choose the price (any whole dollar $5–$400) and the system attaches the locked content automatically.\n- Valid price range (internal, never spoken): ${priceBoundsStr}\n- ${negotiationContext}${negotiationPromptLine ? `\n- ${negotiationPromptLine}` : `\n- ${catalogInstructions}\n${setCatalogStr}`}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
+${ppvAllowed ? `- PPV is ALLOWED right now — the conversation mood is already explicit/flirty. Offer ONLY if it fits naturally: you MUST write a real content tease in the LAST bubble (reference a photo/video/something you made for them) and NEVER set a price without one.\n- NEVER mention price, money, or picture counts — YOU choose the price (any whole dollar $5–$400) and the system attaches the locked content automatically.\n- Valid price range (internal, never spoken): ${priceBoundsStr}\n- ${negotiationContext}${negotiationPromptLine ? `\n- ${negotiationPromptLine}` : `\n- ${catalogInstructions}\n${setCatalogStr}`}` : `- PPV is NOT allowed right now — either the system is enforcing a gap between offers or the conversation mood is still casual/friendly (not yet sexual/flirty). Do NOT offer PPV this turn. Keep chatting and building the mood.`}
 
 RECENT CONVERSATION (oldest to newest):
 ${conversationContext || "No prior messages."}
@@ -865,6 +874,28 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
     // (Spend-based dynamic pricing was removed — the ladder + rescue system in
     // ppv-reconcile.ts now owns all advancement/demotion. The AI never sets the
     // price; the fan's ladder level does.)
+
+    // === TEASE-OR-DROP BACKSTOP (casual-turn guardrail) ===
+    // If the AI set a price but the LAST bubble has no content tease, strip the
+    // PPV and send a free conversational reply. Prevents a paywall from being
+    // bolted onto an innocent bubble (the Rubber Herring case). A negotiation
+    // re-offer is exempt — the tease lives in the prior offer bubbles the fan
+    // is reacting to.
+    if (ppvCents && ppvCents > 0 && !negotiationActive) {
+      const lastBubble = replies.length > 0 ? replies[replies.length - 1] : "";
+      if (!hasContentTease(lastBubble)) {
+        const _dropPreview = lastBubble.slice(0, 80);
+        ppvCents = null;
+        await base44.asServiceRole.entities.ActivityLog.create({
+          creator_profile_id: creatorProfileId,
+          conversation_id: conversationId,
+          event_type: "ai.ppv_no_tease_drop",
+          status: "info",
+          message: `PPV dropped to free message — AI set a price but the last bubble had no content tease ("${_dropPreview}")`,
+          metadata: { job_id: job.id },
+        });
+      }
+    }
 
     // === RATE LIMIT CHECK ===
     let rateLimited = false;
