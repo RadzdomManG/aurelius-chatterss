@@ -31,11 +31,25 @@ export default async function (req: Request): Promise<Response> {
     // --- Load all organizations ---
     const orgs = await base44.asServiceRole.entities.Organization.list("-created_date", 500);
 
-    // --- Load all members (to resolve owner emails) ---
+    // --- Load all members (to resolve owner emails + full rosters) ---
     const allMembers = await base44.asServiceRole.entities.OrganizationMember.list("-created_date", 500);
     const membersByOrg: Record<string, any[]> = {};
     for (const m of (allMembers || [])) {
       (membersByOrg[m.organization_id] = membersByOrg[m.organization_id] || []).push(m);
+    }
+
+    // --- Resolve emails for every member user_id in one pass ---
+    const allUserIds = Array.from(new Set((allMembers || []).map((m: any) => m.user_id).filter(Boolean)));
+    const userMap: Record<string, any> = {};
+    // User entity is read-only via asServiceRole; fetch in batches of 50.
+    for (let i = 0; i < allUserIds.length; i += 50) {
+      const batch = allUserIds.slice(i, i + 50);
+      for (const uid of batch) {
+        try {
+          const u = await base44.asServiceRole.entities.User.get(uid);
+          if (u) userMap[uid] = u;
+        } catch (e) {}
+      }
     }
 
     // --- Load this month's usage records ---
@@ -60,12 +74,25 @@ export default async function (req: Request): Promise<Response> {
 
     // --- Build customer table ---
     const customers = (orgs || []).map((org: any) => {
-      const ownerMember = (membersByOrg[org.id] || []).find((m: any) => m.role === "owner");
+      const orgMembers = membersByOrg[org.id] || [];
+      const ownerMember = orgMembers.find((m: any) => m.role === "owner");
       const usage = usageByOrg[org.id] || {};
       const limits = PLAN_TIERS[org.plan_tier || "free"] || PLAN_TIERS.free;
       const aiUsed = usage.ai_jobs_processed || 0;
       const aiLimit = limits.maxAiMessagesPerMonth;
       const aiPct = aiLimit > 0 ? Math.min(100, Math.round((aiUsed / aiLimit) * 100)) : 0;
+      const members = orgMembers.map((m: any) => {
+        const u = userMap[m.user_id];
+        return {
+          id: m.id,
+          userId: m.user_id,
+          email: u?.email || null,
+          fullName: u?.full_name || null,
+          role: m.role,
+          platformAdmin: m.platform_admin === true,
+        };
+      });
+      const ownerEmail = members.find((m: any) => m.role === "owner")?.email || null;
       return {
         id: org.id,
         name: org.name,
@@ -76,7 +103,7 @@ export default async function (req: Request): Promise<Response> {
         trialEndsAt: org.trial_ends_at || null,
         createdAt: org.created_date,
         ownerId: ownerMember?.user_id || null,
-        ownerEmail: null, // resolved below
+        ownerEmail,
         creatorsConnected: creatorsByOrg[org.id] || 0,
         maxCreators: limits.maxCreators,
         aiJobsThisMonth: aiUsed,
@@ -84,6 +111,7 @@ export default async function (req: Request): Promise<Response> {
         aiUsagePercent: aiPct,
         messagesSentThisMonth: usage.messages_sent || 0,
         ppvOffersThisMonth: usage.ppv_offers_sent || 0,
+        members,
       };
     });
 

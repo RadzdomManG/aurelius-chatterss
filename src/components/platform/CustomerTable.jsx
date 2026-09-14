@@ -3,6 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { ChevronRight, ChevronDown, Lock, MoreVertical, Check, X } from "lucide-react";
+import MembersPanel from "@/components/platform/MembersPanel";
 
 // CustomerTable — the customer list on the SaaS owner dashboard.
 // Each row expands to show usage detail + plan management controls.
@@ -160,6 +161,9 @@ function CustomerDetail({ customer, onPlanChanged }) {
 
   return (
     <div className="grid gap-4 sm:grid-cols-3">
+      <div className="sm:col-span-3">
+        <MembersPanel customer={customer} onMembersChanged={onPlanChanged} />
+      </div>
       {/* Plan tier */}
       <div className="rounded-lg border border-border bg-card p-3">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Plan Tier</p>
