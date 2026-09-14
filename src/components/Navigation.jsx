@@ -17,6 +17,7 @@ import {
   FileText,
   Webhook,
   Lock,
+  CreditCard,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import LiveActivityBell from "@/components/shared/LiveActivityBell";
@@ -62,6 +63,7 @@ const NAV_GROUPS = [
       { to: "/activity", label: "Activity", icon: Activity },
       { to: "/diagnostics", label: "Diagnostics", icon: Stethoscope },
       { to: "/settings", label: "Settings", icon: Settings },
+      { to: "/billing", label: "Billing", icon: CreditCard },
     ],
   },
 ];

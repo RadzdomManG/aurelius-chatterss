@@ -5,13 +5,15 @@ import ReconnectBanner from "@/components/shared/ReconnectBanner";
 import { useAIProcessor } from "@/hooks/useAIProcessor";
 import { CreatorProvider } from "@/lib/creator-context";
 import CopilotPanel from "@/components/copilot/CopilotPanel";
+import { PlanProvider } from "@/lib/plan-context";
 import { Sparkles } from "lucide-react";
 
 export default function AppShell() {
   useAIProcessor();
   const [copilotOpen, setCopilotOpen] = React.useState(false);
   return (
-    <CreatorProvider>
+    <PlanProvider>
+      <CreatorProvider>
       <div className="flex h-screen overflow-hidden bg-background">
         <Navigation />
         <main className="flex flex-1 flex-col overflow-hidden">
@@ -32,7 +34,8 @@ export default function AppShell() {
 
         {/* Slide-out Copilot panel */}
         <CopilotPanel open={copilotOpen} onClose={() => setCopilotOpen(false)} />
-      </div>
-    </CreatorProvider>
+        </div>
+      </CreatorProvider>
+    </PlanProvider>
   );
 }

@@ -3,6 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { usePlan } from "@/lib/plan-context";
 import { PlanBadge } from "@/components/shared/UpgradePrompt";
 import { Sparkles, TrendingUp, MessageSquare, Bot, Users, CreditCard, Calendar, Crown } from "lucide-react";
+import { Link } from "react-router-dom";
 
 // Billing / Usage page — shows the customer's current plan, this month's
 // usage (AI jobs, messages, PPV offers, creators), and the plan limits.
@@ -124,6 +125,11 @@ export default function Billing() {
               <p className="mt-1 text-sm text-muted-foreground">
                 To upgrade your plan, change your tier, or manage billing, contact the platform owner directly.
                 There is no automated billing — all arrangements are handled personally.
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Access may be delayed, downgraded, or revoked for late or missed payments. See our{" "}
+                <Link to="/terms" className="text-primary font-medium hover:underline">Terms & Conditions</Link>
+                {" "}for details.
               </p>
             </div>
           </div>

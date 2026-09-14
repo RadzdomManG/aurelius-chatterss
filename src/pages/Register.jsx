@@ -46,7 +46,9 @@ export default function Register() {
       if (result?.access_token) {
         base44.auth.setToken(result.access_token);
       }
-      window.location.href = safeReturnTo();
+      // New sign-ups go through onboarding so the SaaS workspace is provisioned.
+      const dest = safeReturnTo();
+      window.location.href = dest === "/" ? "/onboarding" : dest;
     } catch (err) {
       setError(err.message || "Invalid verification code");
     } finally {
@@ -226,6 +228,13 @@ export default function Register() {
             "Create account"
           )}
         </Button>
+        <p className="text-center text-xs text-muted-foreground pt-1">
+          By creating an account you agree to our{" "}
+          <Link to="/terms" className="text-primary font-medium hover:underline">
+            Terms & Conditions
+          </Link>
+          .
+        </p>
       </form>
     </AuthLayout>
   );

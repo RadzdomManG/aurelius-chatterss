@@ -42,6 +42,7 @@ const PpvContent = lazy(() => import('@/pages/PpvContent'));
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
 const Billing = lazy(() => import('@/pages/Billing'));
 const PlatformDashboard = lazy(() => import('@/pages/PlatformDashboard'));
+const Terms = lazy(() => import('@/pages/Terms'));
 
 function PageSkeleton() {
   return (
@@ -89,6 +90,7 @@ const AuthenticatedApp = () => {
       <Route path="/reset-password" element={<PageWrapper><ResetPassword /></PageWrapper>} />
       <Route path="/fanvue/callback" element={<PageWrapper><FanvueCallback /></PageWrapper>} />
       <Route path="/onboarding" element={<PageWrapper><Onboarding /></PageWrapper>} />
+      <Route path="/terms" element={<PageWrapper><Terms /></PageWrapper>} />
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppShell />}>
           <Route path="/" element={<PageWrapper><Inbox /></PageWrapper>} />
