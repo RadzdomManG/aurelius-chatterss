@@ -48,24 +48,25 @@
     },
     "price_cents": {
       "type": "integer",
-      "description": "The actual price sent to the fan for THIS record. For a base offer this is the base price; for a rescue record this is the discounted price."
+      "description": "The actual price sent to the fan for THIS record. For a base offer this is the base price; for a negotiation re-offer this is the persona-chosen negotiated price."
     },
     "offer_type": {
       "type": "string",
       "enum": [
         "base",
-        "rescue"
+        "rescue",
+        "negotiation"
       ],
       "default": "base",
-      "description": "base = the original full-price PPV offer; rescue = the discounted re-offer of the same content."
+      "description": "base = the original PPV offer; rescue = retired discounted re-offer; negotiation = a persona-priced re-offer of the SAME content when the fan counters the base offer's price (bypasses the inter-offer cooldown)."
     },
     "parent_offer_id": {
       "type": "string",
-      "description": "For rescue offers, the id of the base PpvOfferTracking this rescues. null for base offers."
+      "description": "For negotiation/rescue offers, the id of the base PpvOfferTracking this re-offers. null for base offers."
     },
     "base_price_cents": {
       "type": "integer",
-      "description": "The original base price (present on both base and rescue records for ladder logic)."
+      "description": "The original base price (present on base, rescue, and negotiation records)."
     },
     "ladder_level": {
       "type": "integer",
@@ -115,7 +116,8 @@
       "type": "string",
       "enum": [
         "base",
-        "rescue"
+        "rescue",
+        "negotiation"
       ],
       "description": "Which offer the fan actually purchased (set when purchased=true)."
     },

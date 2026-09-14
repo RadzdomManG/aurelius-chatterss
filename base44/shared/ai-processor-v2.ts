@@ -169,6 +169,24 @@ function isPpvOfferAllowed(conversation: any, settings: any, recentMsgs: any[]):
   return true;
 }
 
+// ---- Negotiation detection ----
+// A fan message is a price counter when a recent unpaid base offer exists AND
+// the message contains a dollar amount or counter keywords. Lets the persona
+// re-offer the SAME content immediately, bypassing the inter-offer cooldown.
+const NEGOTIATION_WINDOW_MS = 30 * 60 * 1000; // only counters on offers sent in the last ~30 min
+const NEGOTIATION_KEYWORDS = ["cheaper", "lower", "less", "deal", "too much", "too expensive", "too pricey", "make it", "can u", "can you", "will you", "how about", "drop the price", "reduce", "negotiate", "discount"];
+
+function detectNegotiation(fanText: string, baseOffer: any): boolean {
+  if (!baseOffer || baseOffer.purchased === true) return false;
+  const sentAt = baseOffer.sent_at ? new Date(baseOffer.sent_at).getTime() : new Date(baseOffer.created_date || 0).getTime();
+  if (!sentAt || Date.now() - sentAt > NEGOTIATION_WINDOW_MS) return false;
+  const t = (fanText || "").toLowerCase();
+  if (!t) return false;
+  if (/\$\s*\d+/.test(t)) return true;                       // "$5", "$ 10"
+  if (/\b\d{1,3}\s*(bucks|dollar|dollars|usd)\b/.test(t)) return true;
+  return NEGOTIATION_KEYWORDS.some((k) => t.includes(k));
+}
+
 // (Removed getDefaultPpvMedia — PPV media now comes exclusively from the
 // AI-chosen curated PpvContentSet, never random vault items.)
 
@@ -504,9 +522,62 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
       ? recentQuestionTexts.map((q: string) => `- ${q}`).join("\n")
       : "(none yet)";
 
+    // === NEGOTIATION DETECTION ===
+    // If the fan is countering the most recent unpaid base offer (e.g.
+    // "can u make it $5?"), bypass the inter-offer cooldown so the persona can
+    // re-offer the SAME locked content at a negotiated price immediately.
+    let negotiationActive = false;
+    let negotiationParent: any = null;
+    let negotiationMediaUuids: string[] = [];
+    if (settings.ppv_allowed && lastFanMessage?.body) {
+      const warmup = settings.ppv_warmup_messages ?? 3;
+      if ((recentMsgs || []).length >= warmup) {
+        try {
+          const baseOffers = await base44.asServiceRole.entities.PpvOfferTracking.filter(
+            { creator_profile_id: creatorProfileId, fan_id: conversation.fan_id, offer_type: "base" },
+            "-created_date",
+            10
+          );
+          const recentBase = (baseOffers || []).find((o: any) => o.purchased !== true);
+          if (recentBase && detectNegotiation(lastFanMessage.body, recentBase)) {
+            // Cap at 2 negotiation re-offers per base offer to stop endless haggling.
+            const priorNegotiations = await base44.asServiceRole.entities.PpvOfferTracking.filter(
+              { creator_profile_id: creatorProfileId, fan_id: conversation.fan_id, parent_offer_id: recentBase.id, offer_type: "negotiation" },
+              "created_date",
+              10
+            );
+            if ((priorNegotiations || []).length < 2) {
+              // Resolve the exact locked media from the base offer (re-offer the
+              // SAME content, not fresh unseen media).
+              let mediaUuids: string[] = Array.isArray(recentBase.media_uuids) ? recentBase.media_uuids : [];
+              if (mediaUuids.length === 0 && recentBase.content_set_id) {
+                const set = await base44.asServiceRole.entities.PpvContentSet.get(recentBase.content_set_id).catch(() => null);
+                if (set && Array.isArray(set.media_uuids)) mediaUuids = set.media_uuids.slice(0, 5);
+              }
+              if (mediaUuids.length > 0) {
+                const elig = await validateMediaForPpv(base44, creatorProfileId, mediaUuids);
+                if (elig.ok) {
+                  negotiationActive = true;
+                  negotiationParent = recentBase;
+                  negotiationMediaUuids = mediaUuids;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error("[ai] negotiation detection failed:", (e as any).message);
+        }
+      }
+    }
+
     const ppvWindowOpen = isPpvOfferAllowed(conversation, settings, recentMsgs);
-    const ppvAllowed = !!settings.ppv_allowed && ppvWindowOpen;
+    // Negotiation bypasses the inter-offer cooldown but still requires the
+    // global ppv_allowed flag (checked above) and the warmup floor.
+    const ppvAllowed = negotiationActive || (!!settings.ppv_allowed && ppvWindowOpen);
     const priceBoundsStr = `$5 – $400 (any whole dollar: $5, $6, $7 … $400)`;
+    const negotiationPromptLine = negotiationActive
+      ? `NEGOTIATION: The fan is responding to your last PPV offer and pushing back on price. Re-offer the SAME content right now at any whole-dollar price $5–$400 — do not wait. The system will attach the exact same locked content automatically; you do NOT need to choose a set or folder — just set suggested_ppv_cents. Choose a price your persona thinks will close the sale.`
+      : null;
 
     // === PPV CONTENT SOURCE ===
     // Two sources, set per creator in AutomationSettings.ppv_source:
@@ -525,7 +596,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     let catalogInstructions = ppvSource === "auto_vault"
       ? `VAULT FOLDERS (your approved content categories — choose the ONE folder that best matches what the fan is asking for and put its name in chosen_folder; the system auto-attaches unseen locked media from that folder and sets the price).`
       : `CONTENT SETS (curated locked bundles — choose the ONE that best matches the fan's request and put its id in chosen_set_id; the system attaches its media and sets the price). Match the fan's words to a set's TAGS first, then its DESCRIPTION.`;
-    if (ppvAllowed) {
+    if (ppvAllowed && !negotiationActive) {
       const sent = await base44.asServiceRole.entities.PpvOfferTracking.filter({ creator_profile_id: creatorProfileId, fan_id: conversation.fan_id }, "created_date", 100);
       sentTracking = sent || [];
       // Reconcile recent purchases against Fanvue spending insights and
@@ -632,7 +703,7 @@ Respond ONLY with a JSON object:
   "confidence": 0.0-1.0,
   "intent": "conversation/engagement/sales/support",
   "sentiment": "positive/neutral/apologetic/playful",
-  "suggested_ppv_cents": null or one of [1000,1200,1500,2500,5000,10000,20000,30000,40000],
+  "suggested_ppv_cents": null, or any whole-dollar cents 500–40000 (e.g. 500=$5, 1200=$12, 1500=$15),
   "ppv_reason": "why PPV is appropriate now, or null",
   "chosen_set_id": "id of the curated content set that best matches the fan's request, or null",
   "memory_updates": [{"key": "...", "value": "..."}]
@@ -661,7 +732,7 @@ BANNED RECENT QUESTIONS (do NOT re-ask these or anything close — vary the angl
 ${bannedQuestionsStr}
 
 SALES CONTEXT:
-${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — YOU choose the price (any whole dollar $5–$400) and the system attaches the locked content automatically.\n- Valid price range (internal, never spoken): ${priceBoundsStr}\n- ${negotiationContext}\n- ${catalogInstructions}\n${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
+${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — YOU choose the price (any whole dollar $5–$400) and the system attaches the locked content automatically.\n- Valid price range (internal, never spoken): ${priceBoundsStr}\n- ${negotiationContext}${negotiationPromptLine ? `\n- ${negotiationPromptLine}` : `\n- ${catalogInstructions}\n${setCatalogStr}`}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
 
 RECENT CONVERSATION (oldest to newest):
 ${conversationContext || "No prior messages."}
@@ -691,7 +762,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
     let chosenSet: any = null;
     let chosenFolder: string | null = null;
     let vaultMediaForOffer: string[] = [];
-    if (ppvAllowed) {
+    if (ppvAllowed && !negotiationActive) {
       if (ppvSource === "auto_vault") {
         if (aiResult.chosen_folder) {
           const folderName = String(aiResult.chosen_folder).trim();
@@ -834,7 +905,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       // Re-fetch the conversation fresh; if we're still inside the mandatory
       // 10-minute window, drop this PPV and send a plain conversational reply
       // so the fan keeps chatting but never gets back-to-back PPV offers.
-      if (ppvCents && ppvCents > 0) {
+      if (ppvCents && ppvCents > 0 && !negotiationActive) {
         const freshConv = await base44.asServiceRole.entities.Conversation.get(conversationId);
         const minMinutes = Math.max(settings.ppv_min_minutes_between_offers || 10, 10);
         let drop = false;
@@ -878,7 +949,13 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       let offerFolder: string | null = null;
       if (ppvCents && ppvCents > 0) {
         let mediaUuidsToAttach: string[] = [];
-        if (ppvSource === "auto_vault" && chosenFolder && vaultMediaForOffer.length > 0) {
+        if (negotiationActive && negotiationMediaUuids.length > 0) {
+          // Re-offer the EXACT same locked content the fan is negotiating on.
+          mediaUuidsToAttach = negotiationMediaUuids;
+          offerSource = negotiationParent?.source === "vault" ? "vault" : "set";
+          offerFolder = negotiationParent?.folder_name || null;
+          chosenSetId = negotiationParent?.content_set_id || null;
+        } else if (ppvSource === "auto_vault" && chosenFolder && vaultMediaForOffer.length > 0) {
           mediaUuidsToAttach = vaultMediaForOffer;
           offerSource = "vault";
           offerFolder = chosenFolder;
@@ -999,10 +1076,8 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       // of the SAME content after a random 5-10 min delay). The rescue poller
       // (process-rescue-offers workflow) fires it; purchase reconciliation cancels
       // it if the fan buys the base first.
-      if (ppvCents && (chosenSetId || (offerSource === "vault" && attachedMediaUuids.length > 0))) {
+      if (ppvCents && (chosenSetId || attachedMediaUuids.length > 0)) {
         const baseSentAt = new Date().toISOString();
-        // Record the base offer for analytics. Rescue scheduling is retired —
-        // the persona now handles re-offers and discounts via its own judgment.
         try {
           await base44.asServiceRole.entities.PpvOfferTracking.create({
             creator_profile_id: creatorProfileId,
@@ -1015,8 +1090,9 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
             folder_name: offerFolder,
             sent_at: baseSentAt,
             price_cents: ppvCents,
-            offer_type: "base",
-            base_price_cents: ppvCents,
+            offer_type: negotiationActive ? "negotiation" : "base",
+            parent_offer_id: negotiationActive ? (negotiationParent?.id || null) : null,
+            base_price_cents: negotiationActive ? (negotiationParent?.base_price_cents || negotiationParent?.price_cents || ppvCents) : ppvCents,
             base_status: "sent",
             rescue_status: "none",
             purchased: false,
@@ -1025,7 +1101,8 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         try {
           await base44.asServiceRole.entities.Fan.update(conversation.fan_id, {
             last_ppv_sent_at: baseSentAt,
-            last_base_ppv_price_cents: ppvCents,
+            // Don't overwrite the base price snapshot on a negotiation re-offer.
+            ...(negotiationActive ? {} : { last_base_ppv_price_cents: ppvCents }),
           });
         } catch (e) {}
       }
@@ -1035,7 +1112,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         conversation_id: conversationId,
         event_type: ppvCents ? "ai.ppv_base_sent" : "ai.auto_sent",
         status: "success",
-        message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV: $${(ppvCents / 100).toFixed(2)}, media locked, persona-set price)` : ""}`,
+        message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV: $${(ppvCents / 100).toFixed(2)}, media locked, persona-set price${negotiationActive ? ", negotiation re-offer" : ""})` : ""}`,
         metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
       });
 

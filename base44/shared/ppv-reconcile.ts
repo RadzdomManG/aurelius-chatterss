@@ -54,10 +54,11 @@ export async function reconcileFanPpv(base44, connection, fan, _settings) {
       match.used = true;
       matched++;
       const isRescue = offer.offer_type === "rescue";
+      const isNegotiation = offer.offer_type === "negotiation";
       const update = {
         purchased: true,
         purchased_at: new Date(match.at).toISOString(),
-        purchase_type: isRescue ? "rescue" : "base",
+        purchase_type: isNegotiation ? "negotiation" : (isRescue ? "rescue" : "base"),
       };
       if (isRescue) {
         update.rescue_status = "purchased";
