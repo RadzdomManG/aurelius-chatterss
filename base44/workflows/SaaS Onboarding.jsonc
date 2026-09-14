@@ -1,0 +1,41 @@
+{
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "app_user_auth",
+      "events": [
+        "signup"
+      ]
+    }
+  },
+  "name": "SaaS Onboarding",
+  "description": "Fires on new user signup to auto-provision an Organization workspace, make the user the owner, and seed a UsageRecord. Idempotent \u2014 safe to fire on every signup.",
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "saas_onboarding",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "provision_workspace": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "onboarding-create-workspace",
+            "args": {
+              "user_id": "${ .trigger.user_id }",
+              "email": "${ .trigger.email }",
+              "auth_method": "${ .trigger.auth_method }"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Provision workspace",
+            "description": "Auto-create org + owner membership"
+          }
+        }
+      }
+    ]
+  }
+}

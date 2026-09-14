@@ -7,6 +7,7 @@ import { validateMediaForPpv } from "./media-eligibility.ts";
 import { reconcileFanPpv } from "./ppv-reconcile.ts";
 import { hasExplicitMood, hasContentTease } from "./ppv-guards.ts";
 import { generateIdempotencyKey } from "./send-helpers.ts";
+import { checkAiMessageLimit, incrementUsage } from "./plan-limits.ts";
 
 /**
  * Server-side AI processor — the single canonical automation engine.
@@ -286,6 +287,15 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
   // processing is halted.
   if (await isPaused(base44)) {
     return await skipJob("GLOBAL_PAUSED");
+  }
+
+  // === SaaS PLAN LIMIT CHECK ===
+  // If this creator's org has hit its monthly AI message cap or is suspended,
+  // skip the job. The fan-facing UI shows an upgrade prompt instead of
+  // processing more work.
+  const planCheck = await checkAiMessageLimit(base44, creatorProfileId);
+  if (!planCheck.allowed) {
+    return await skipJob(planCheck.reason || "PLAN_LIMIT_REACHED");
   }
 
   // Load all context in parallel
@@ -1159,6 +1169,20 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV: $${(ppvCents / 100).toFixed(2)}, media locked, persona-set price${negotiationActive ? ", negotiation re-offer" : ""})` : ""}`,
         metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
       });
+
+      // === SaaS USAGE METERING ===
+      // Increment the org's monthly AI jobs + messages sent counters.
+      if (planCheck.org?.id) {
+        try {
+          await incrementUsage(base44, planCheck.org.id, "ai_jobs_processed", 1);
+          await incrementUsage(base44, planCheck.org.id, "messages_sent", replies.length);
+          if (ppvCents && ppvCents > 0) {
+            await incrementUsage(base44, planCheck.org.id, "ppv_offers_sent", 1);
+          }
+        } catch (e) {
+          // Best-effort — never block a successful send on a metering failure.
+        }
+      }
 
       // Successful send — reset the circuit breaker counter for this creator.
       if (settings?.id && (settings.consecutive_send_failures || 0) > 0) {

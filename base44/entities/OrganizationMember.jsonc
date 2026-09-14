@@ -16,6 +16,11 @@
         "operator"
       ],
       "default": "operator"
+    },
+    "platform_admin": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set by the platform owner to grant this user access to the SaaS Owner Dashboard (/platform). Platform admins can see all organizations, assign plans, and suspend accounts."
     }
   },
   "required": [

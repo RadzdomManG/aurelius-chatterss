@@ -4,6 +4,40 @@
   "properties": {
     "name": {
       "type": "string"
+    },
+    "plan_tier": {
+      "type": "string",
+      "enum": [
+        "free",
+        "pro",
+        "agency"
+      ],
+      "default": "free",
+      "description": "SaaS plan tier assigned by the platform owner. free = 1 creator / 500 AI msgs/mo; pro = 3 creators / 5,000 AI msgs/mo; agency = 10 creators / 50,000 AI msgs/mo."
+    },
+    "plan_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended",
+        "trial"
+      ],
+      "default": "active",
+      "description": "Suspended orgs cannot process AI jobs or use Copilot. Trial = within trial period."
+    },
+    "mrr_cents": {
+      "type": "integer",
+      "default": 0,
+      "description": "Monthly recurring revenue in cents, entered manually by the platform owner (payment handled off-platform)."
+    },
+    "suspended_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trial_ends_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the free trial expires. Null = no trial or trial already converted."
     }
   },
   "required": [

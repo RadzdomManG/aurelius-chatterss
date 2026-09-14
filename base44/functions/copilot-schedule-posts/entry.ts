@@ -5,6 +5,7 @@
 // and creates scheduled Fanvue posts.
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { getValidAccessToken, apiCall } from "../../shared/fanvue-api.ts";
+import { checkCopilotBulkAccess } from "../../shared/plan-limits.ts";
 
 export default async function (req: Request): Promise<Response> {
   let body: any = {};
@@ -33,6 +34,18 @@ export default async function (req: Request): Promise<Response> {
     if (!folderName) return Response.json({ error: "folderName is required" }, { status: 400 });
     if (!totalPosts || totalPosts < 1) return Response.json({ error: "totalPosts must be at least 1" }, { status: 400 });
     if (!days || days < 1) return Response.json({ error: "days must be at least 1" }, { status: 400 });
+
+    // === SaaS PLAN GATE: bulk scheduling is Pro/Agency only ===
+    const planCheck = await checkCopilotBulkAccess(base44, creatorProfileId);
+    if (!planCheck.allowed) {
+      return Response.json({
+        error: planCheck.reason === "ORG_SUSPENDED"
+          ? "Your account is suspended. Contact the platform owner to reactivate."
+          : "Bulk scheduling is a Pro/Agency feature. Contact the platform owner to upgrade your plan.",
+        planLimited: true,
+        reason: planCheck.reason,
+      }, { status: 403 });
+    }
 
     // Resolve connection
     const conns = await base44.asServiceRole.entities.FanvueConnection.filter(
