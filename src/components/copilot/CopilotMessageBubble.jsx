@@ -97,7 +97,7 @@ export default function CopilotMessageBubble({ message }) {
             </div>
           ) : (
             <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-3.5 py-2 text-sm text-foreground">
-              <ReactMarkdown className="prose prose-sm max-w-none [&>*]:my-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{displayContent}</ReactMarkdown>
+              <ReactMarkdown className="text-sm leading-relaxed [&>*]:my-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_a]:text-primary [&_a]:underline [&_strong]:font-semibold">{displayContent}</ReactMarkdown>
             </div>
           )
         )}

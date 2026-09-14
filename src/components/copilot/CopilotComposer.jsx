@@ -1,4 +1,5 @@
 import React from "react";
+import { base44 } from "@/api/base44Client";
 import { Send, ImagePlus, FolderOpen, Loader2, X } from "lucide-react";
 import VaultPickerDialog from "./VaultPickerDialog";
 
@@ -17,7 +18,6 @@ export default function CopilotComposer({ onSend, disabled }) {
 
     setUploading(true);
     try {
-      const { base44 } = await import("@/api/base44Client");
       const uploaded = [];
       for (const file of files) {
         try {
