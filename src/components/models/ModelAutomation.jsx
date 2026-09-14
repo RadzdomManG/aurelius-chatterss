@@ -212,29 +212,23 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
         {settings.ppv_allowed && (
           <>
           <div className="rounded-md border border-border p-3">
-            <p className="mb-1 text-xs font-medium text-foreground">PPV Ladder</p>
-            <p className="mb-2.5 text-xs text-muted-foreground">Official base ladder. The fan's level determines every base offer price — the AI never sets the price. $5 is the floor (always on); $400 is the ceiling.</p>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {PPV_TIERS.map((c, i) => (
-                <span key={c} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                  {fmtTier(c)}
-                  {i < PPV_TIERS.length - 1 && <span className="text-muted-foreground/60">→</span>}
-                </span>
-              ))}
+            <p className="mb-1 text-xs font-medium text-foreground">Pricing Bounds</p>
+            <p className="mb-2.5 text-xs text-muted-foreground">The persona decides the actual PPV price for every offer and may negotiate freely with the fan. You only set the hard bounds — the price can be any whole dollar between the floor and ceiling.</p>
+            <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs">
+              <span className="text-muted-foreground">Floor: <strong className="text-foreground">$5</strong> (locked)</span>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground">Ceiling: <strong className="text-foreground">${(settings.max_ppv_cents / 100).toFixed(0)}</strong></span>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Default PPV (cents)</label>
-                <input type="number" min={500} step={100} value={settings.default_ppv_cents} onChange={(e) => setSettings({ ...settings, default_ppv_cents: Math.max(500, parseInt(e.target.value) || 500) })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Max PPV (cents)</label>
-                <input type="number" min={500} max={40000} step={100} value={settings.max_ppv_cents} onChange={(e) => setSettings({ ...settings, max_ppv_cents: Math.min(40000, Math.max(500, parseInt(e.target.value) || 40000)) })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
-              </div>
+            <div className="mt-3">
+              <label className="mb-1 block text-xs text-muted-foreground">Ceiling / Max PPV (cents)</label>
+              <input type="number" min={500} max={40000} step={100} value={settings.max_ppv_cents} onChange={(e) => setSettings({ ...settings, max_ppv_cents: Math.min(40000, Math.max(500, parseInt(e.target.value) || 40000)) })}
+                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-4">
+          </div>
+
+          <div className="rounded-md border border-border p-3">
+            <p className="mb-2.5 text-xs font-medium text-foreground">Offer Frequency</p>
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Min Messages Between Offers</label>
                 <input type="number" min={1} value={settings.ppv_min_messages_between_offers} onChange={(e) => setSettings({ ...settings, ppv_min_messages_between_offers: Math.max(1, parseInt(e.target.value) || 5) })}
@@ -258,38 +252,6 @@ export default function ModelAutomation({ creator, autoSettings, onSaved }) {
                   className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
               </div>
             </div>
-          </div>
-
-          <div className="rounded-md border border-border p-3">
-            <ToggleRow label="Automatic Failed-Offer Discount (Rescue)" value={settings.rescue_enabled} onChange={(v) => setSettings({ ...settings, rescue_enabled: v })} />
-            {settings.rescue_enabled && (
-              <div className="mt-3 space-y-3">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                  <span>Discount: <strong className="text-foreground">−$5</strong> (fixed)</span>
-                  <span>·</span>
-                  <span>Rescue delay: <strong className="text-foreground">Random 5–10 min</strong></span>
-                  <span>·</span>
-                  <span>Only one rescue: <strong className="text-success">ON</strong></span>
-                  <span>·</span>
-                  <span>Keep locked: <strong className="text-success">ALWAYS</strong></span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  When a fan doesn't unlock a base PPV (priced $15 or above), the system re-offers the SAME locked content once at −$5 after a random 5–10 min. Rescue is disabled for $5 and $10 base offers (too cheap to discount credibly). Full-price purchase advances the fan one level; discount purchase keeps the level; if both fail, the next offer drops one level. Rescue prices may go below $15 down to $7 but never lower.
-                </p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Rescue Min Delay (min)</label>
-                    <input type="number" min={1} value={settings.rescue_min_delay_minutes} onChange={(e) => setSettings({ ...settings, rescue_min_delay_minutes: Math.max(1, parseInt(e.target.value) || 5) })}
-                      className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Rescue Max Delay (min)</label>
-                    <input type="number" min={2} value={settings.rescue_max_delay_minutes} onChange={(e) => setSettings({ ...settings, rescue_max_delay_minutes: Math.max(2, parseInt(e.target.value) || 10) })}
-                      className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm" />
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
           </>
         )}

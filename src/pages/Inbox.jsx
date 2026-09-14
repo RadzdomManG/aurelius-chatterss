@@ -60,6 +60,12 @@ export default function Inbox() {
   const fansRef = React.useRef({});
   React.useEffect(() => { fansRef.current = fans; }, [fans]);
 
+  // Ref mirror of the selected model so the realtime subscriptions (set up once)
+  // can guard against cross-model bleed — a Conversation/Message event from a
+  // DIFFERENT model must never enter the visible list or open thread.
+  const selectedCreatorIdRef = React.useRef(selectedCreatorId);
+  React.useEffect(() => { selectedCreatorIdRef.current = selectedCreatorId; }, [selectedCreatorId]);
+
   // Lazily fetch a fan record that isn't in the local map yet (e.g. a fan
   // created by a webhook after initial load, or one beyond the initial
   // page). Prevents "Unknown / @unknown" when Fanvue actually has identity.
@@ -141,39 +147,43 @@ export default function Inbox() {
 
     try {
       unsubMessages = base44.entities.Message.subscribe((event) => {
-        if (event.type === "create" && activeConvIdsRef.current.includes(event.data.conversation_id)) {
-          setMessages((prev) => {
-            const list = Array.isArray(prev) ? prev : [];
-            // Dedup by id AND external_uuid so a webhook-created record (real
-            // uuid) can't double up with an optimistic local record (null uuid)
-            // — the root cause of phantom duplicate bubbles.
-            if (list.some((m) => m.id === event.data.id)) return prev;
-            if (event.data.external_uuid && list.some((m) => m.external_uuid === event.data.external_uuid)) {
-              // Patch the existing optimistic record with the real id/uuid.
-              return list.map((m) =>
-                m.external_uuid === event.data.external_uuid ? { ...m, ...event.data } : m
-              );
-            }
-            return [...list, event.data];
-          });
-        }
+        if (event.type !== "create") return;
+        // Reject anything outside the active fan's thread AND the selected model.
+        if (!activeConvIdsRef.current.includes(event.data.conversation_id)) return;
+        if (event.data?.creator_profile_id && event.data.creator_profile_id !== selectedCreatorIdRef.current) return;
+        setMessages((prev) => {
+          const list = Array.isArray(prev) ? prev : [];
+          // Dedup by id AND external_uuid so a webhook-created record (real
+          // uuid) can't double up with an optimistic local record (null uuid)
+          // — the root cause of phantom duplicate bubbles.
+          if (list.some((m) => m.id === event.data.id)) return prev;
+          if (event.data.external_uuid && list.some((m) => m.external_uuid === event.data.external_uuid)) {
+            // Patch the existing optimistic record with the real id/uuid.
+            return list.map((m) =>
+              m.external_uuid === event.data.external_uuid ? { ...m, ...event.data } : m
+            );
+          }
+          return [...list, event.data];
+        });
       });
       unsubConvos = base44.entities.Conversation.subscribe((event) => {
-        if (event.type === "create" || event.type === "update") {
-          setConversations((prev) => {
-            const idx = prev.findIndex((c) => c.id === event.data.id);
-            if (idx >= 0) {
-              const updated = [...prev];
-              updated[idx] = event.data;
-              return updated;
-            }
-            return [event.data, ...prev];
-          });
-          // Fetch the fan for any conversation whose fan isn't loaded yet
-          // (covers brand-new webhook-created fans and fans beyond the
-          // initial page — both previously rendered as "Unknown").
-          if (event.data?.fan_id) ensureFan(event.data.fan_id);
-        }
+        if (event.type !== "create" && event.type !== "update") return;
+        // Scope to the currently selected model — another model's conversations
+        // must never bleed into the visible list (the cross-model overlap).
+        if (event.data?.creator_profile_id && event.data.creator_profile_id !== selectedCreatorIdRef.current) return;
+        setConversations((prev) => {
+          const idx = prev.findIndex((c) => c.id === event.data.id);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = event.data;
+            return updated;
+          }
+          return [event.data, ...prev];
+        });
+        // Fetch the fan for any conversation whose fan isn't loaded yet
+        // (covers brand-new webhook-created fans and fans beyond the
+        // initial page — both previously rendered as "Unknown").
+        if (event.data?.fan_id) ensureFan(event.data.fan_id);
       });
       setRealtimeStatus("live");
     } catch (err) {

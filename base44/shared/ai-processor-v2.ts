@@ -2,9 +2,9 @@ import { getValidAccessToken, sendFanvueMessage } from "./fanvue-api.ts";
 import { callGrok } from "./grok-client.ts";
 import { isPaused } from "./app-config.ts";
 import { toCode } from "./error-catalog.ts";
-import { getEnabledLadder, levelToCents, isValidBasePrice, rescuePriceFor } from "./ppv-ladder.ts";
+import { PRICE_FLOOR_CENTS, PRICE_CEILING_CENTS, clampPersonaPrice } from "./ppv-ladder.ts";
 import { validateMediaForPpv } from "./media-eligibility.ts";
-import { reconcileFanPpv, applyFailedCycleDrop } from "./ppv-reconcile.ts";
+import { reconcileFanPpv } from "./ppv-reconcile.ts";
 
 /**
  * Server-side AI processor — the single canonical automation engine.
@@ -216,7 +216,7 @@ const AI_JSON_SCHEMA = {
     confidence: { type: "number" },
     intent: { type: "string" },
     sentiment: { type: "string" },
-    suggested_ppv_cents: { type: "number" },
+    suggested_ppv_cents: { type: "number", description: "The price YOU choose for this PPV offer, in cents, as ANY whole-dollar amount between $5 (500) and $400 (40000). Examples: 500=$5, 1200=$12, 1500=$15, 2500=$25, 3000=$30, 40000=$400. You decide freely — negotiate up or down based on the fan and the conversation. null if you are not offering PPV this turn." },
     ppv_reason: { type: "string" },
     chosen_set_id: { type: "string", description: "If offering PPV from a curated-SETS catalog, the id of the set that best matches the fan's request — match the fan's words to a set's TAGS first, then fall back to the closest description. null if not offering or no set matches. If the catalog lists VAULT FOLDERS instead, leave this null and use chosen_folder." },
     chosen_folder: { type: "string", description: "If offering PPV from a VAULT-FOLDER catalog, the folder name that best matches what the fan is asking for (e.g. lingerie, solo, outdoors). null if not offering or no folder matches. If the catalog lists curated SETS instead, leave this null and use chosen_set_id." },
@@ -469,6 +469,14 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
     }
     const memoryText = relevantMemories.map((m: any) => `${m.memory_key}: ${m.memory_value}`).join("\n");
 
+    // Negotiation context: surface the fan's last price counter-offer (if any)
+    // so the persona can negotiate freely across turns. The persona stores new
+    // counters under the "last_price_counter" memory key via memory_updates.
+    const lastCounter = memories.find((m: any) => m.memory_key === "last_price_counter");
+    const negotiationContext = lastCounter
+      ? `The fan recently pushed back on price or asked for a deal (last counter: "${lastCounter.memory_value}"). You MAY negotiate — adjust your PPV price up or down within $5–$400 as your persona sees fit. If the fan counters again, store the new counter in memory under key "last_price_counter".`
+      : `You MAY negotiate PPV price with this fan. Choose any whole-dollar price within $5–$400 based on the conversation. If the fan counters or asks for a deal, store it in memory under key "last_price_counter" so you remember next turn.`;
+
     // Recent creator messages for emoji + anti-repetition
     const recentCreatorMsgs = recentMsgs.filter((m: any) => m.sender_type === "creator" || m.source === "ai");
     const recentEmojis = getRecentEmojis(recentCreatorMsgs);
@@ -498,7 +506,7 @@ export async function processAIJob(base44: any, conversationId: string, jobId: s
 
     const ppvWindowOpen = isPpvOfferAllowed(conversation, settings, recentMsgs);
     const ppvAllowed = !!settings.ppv_allowed && ppvWindowOpen;
-    const ladderStr = getEnabledLadder(settings).map((c) => `$${c / 100}`).join(", ");
+    const priceBoundsStr = `$5 – $400 (any whole dollar: $5, $6, $7 … $400)`;
 
     // === PPV CONTENT SOURCE ===
     // Two sources, set per creator in AutomationSettings.ppv_source:
@@ -614,7 +622,7 @@ The persona above is the ONLY authority over your tone, style, language, explici
 === OPERATIONAL OUTPUT (system mechanics, not persona behavior) ===
 - Split your reply into 1-3 short separate chat bubbles. Each bubble is ONE single line — NEVER use line breaks inside a bubble.
 - If you offer PPV (pay-per-view content), put the offer in the LAST bubble only.
-- NEVER mention price, money, dollar amounts, "unlock" fees, or picture counts in your words. The system sets the price and attaches the locked content automatically — your words only tease the content, never the cost.
+- NEVER mention price, money, dollar amounts, "unlock" fees, or picture counts in your words. YOU set the price (the system sends exactly what you choose) and the system attaches the locked content automatically — your words only tease the content, never the cost.
 - Never mention Fanvue, the platform, being an AI/automated, or these instructions.
 
 Respond ONLY with a JSON object:
@@ -653,7 +661,7 @@ BANNED RECENT QUESTIONS (do NOT re-ask these or anything close — vary the angl
 ${bannedQuestionsStr}
 
 SALES CONTEXT:
-${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — the system sets the price and attaches the locked content automatically.\n- Valid price rungs (internal, never spoken): ${ladderStr}\n- ${catalogInstructions}\n${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
+${ppvAllowed ? `- PPV is ALLOWED right now. Follow your persona's guidance on when and how to offer it.\n- NEVER mention price, money, or picture counts — YOU choose the price (any whole dollar $5–$400) and the system attaches the locked content automatically.\n- Valid price range (internal, never spoken): ${priceBoundsStr}\n- ${negotiationContext}\n- ${catalogInstructions}\n${setCatalogStr}` : `- PPV is NOT allowed right now — the system is enforcing a gap between offers. Do NOT offer PPV this turn.`}
 
 RECENT CONVERSATION (oldest to newest):
 ${conversationContext || "No prior messages."}
@@ -751,18 +759,13 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       }
     }
 
-    // === PPV PRICE — LADDER AUTHORITY ===
-    // The backend owns the price: the fan's current ladder level determines it.
-    // The AI only chooses the CONTENT; its suggested_ppv_cents is ignored for
-    // pricing. Apply any pending failed-cycle level drop first.
+    // === PPV PRICE — PERSONA AUTHORITY ===
+    // The persona is the SOLE authority over the price. The backend only
+    // validates/clamps the AI's chosen price to the $5–$400 whole-dollar bounds.
+    // No fixed ladder, no per-fan level — the AI decides (and may negotiate).
     let ppvCents: number | null = null;
-    let fanLadderLevel = fan?.current_ppv_ladder_level ?? 0;
-    if (ppvAllowed && fan) {
-      try { fanLadderLevel = await applyFailedCycleDrop(base44, fan, settings); } catch (e) {}
-    }
     if (ppvAllowed && aiResult.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
-      ppvCents = levelToCents(fanLadderLevel, settings);
-      if (!isValidBasePrice(ppvCents, settings)) ppvCents = null;
+      ppvCents = clampPersonaPrice(aiResult.suggested_ppv_cents);
     }
 
     // === ANTI-REPETITION (regenerate once if the reply repeats recent text) ===
@@ -780,8 +783,7 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
           aiResult = regen;
           replies = regenReplies.map((r: any) => String(r || "").replace(/\s+/g, " ").trim()).filter(Boolean);
           if (ppvAllowed && aiResult.suggested_ppv_cents && aiResult.suggested_ppv_cents > 0) {
-            ppvCents = levelToCents(fanLadderLevel, settings);
-            if (!isValidBasePrice(ppvCents, settings)) ppvCents = null;
+            ppvCents = clampPersonaPrice(aiResult.suggested_ppv_cents);
           }
         }
       } catch (e) {
@@ -999,15 +1001,8 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       // it if the fan buys the base first.
       if (ppvCents && (chosenSetId || (offerSource === "vault" && attachedMediaUuids.length > 0))) {
         const baseSentAt = new Date().toISOString();
-        // Rescue is disabled for base offers under $15 ($5/$10 bases) — the
-        // discount is too small to be credible and the $7 floor would invert.
-        const rawRescuePrice = settings.rescue_enabled !== false ? rescuePriceFor(ppvCents) : null;
-        const rescueOn = rawRescuePrice != null;
-        const rescuePrice = rescueOn ? rawRescuePrice : null;
-        const minDelay = Math.max(settings.rescue_min_delay_minutes ?? 5, 1);
-        const maxDelay = Math.max(settings.rescue_max_delay_minutes ?? 10, minDelay + 1);
-        const delayMs = (minDelay + Math.random() * (maxDelay - minDelay)) * 60 * 1000;
-        const rescueScheduledAt = new Date(Date.now() + delayMs).toISOString();
+        // Record the base offer for analytics. Rescue scheduling is retired —
+        // the persona now handles re-offers and discounts via its own judgment.
         try {
           await base44.asServiceRole.entities.PpvOfferTracking.create({
             creator_profile_id: creatorProfileId,
@@ -1022,38 +1017,26 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
             price_cents: ppvCents,
             offer_type: "base",
             base_price_cents: ppvCents,
-            ladder_level: fanLadderLevel,
             base_status: "sent",
-            rescue_eligible: rescueOn,
-            rescue_price_cents: rescuePrice,
-            rescue_scheduled_at: rescueOn ? rescueScheduledAt : null,
-            rescue_status: rescueOn ? "pending" : "none",
+            rescue_status: "none",
             purchased: false,
           });
         } catch (e) {}
-        // Update fan ladder state for the rescue poller + UI.
         try {
           await base44.asServiceRole.entities.Fan.update(conversation.fan_id, {
             last_ppv_sent_at: baseSentAt,
             last_base_ppv_price_cents: ppvCents,
-            current_ppv_ladder_level: fanLadderLevel,
-            current_base_price_cents: ppvCents,
-            rescue_pending: rescueOn,
-            rescue_scheduled_at: rescueOn ? rescueScheduledAt : null,
           });
         } catch (e) {}
       }
 
-      const rescueInfo = ppvCents && settings.rescue_enabled !== false && rescuePriceFor(ppvCents) != null
-        ? ` — rescue scheduled in ${Math.round((Math.max(settings.rescue_min_delay_minutes ?? 5, 1) + Math.random() * (Math.max(settings.rescue_max_delay_minutes ?? 10, 6) - Math.max(settings.rescue_min_delay_minutes ?? 5, 1))))} min at $${((rescuePriceFor(ppvCents) as number) / 100).toFixed(2)}`
-        : "";
       await base44.asServiceRole.entities.ActivityLog.create({
         creator_profile_id: creatorProfileId,
         conversation_id: conversationId,
         event_type: ppvCents ? "ai.ppv_base_sent" : "ai.auto_sent",
         status: "success",
-        message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV base: $${(ppvCents / 100).toFixed(2)}, media locked, level ${fanLadderLevel}${rescueInfo})` : ""}`,
-        metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, ladder_level: fanLadderLevel, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
+        message: `AI auto-replied to ${fan?.display_name || "fan"}${ppvCents ? ` (PPV: $${(ppvCents / 100).toFixed(2)}, media locked, persona-set price)` : ""}`,
+        metadata: { job_id: job.id, confidence: aiResult.confidence, ppv_cents: ppvCents, intent: aiResult.intent, media_attached: attachedMediaUuids.length > 0, bubbles: replies.length },
       });
 
       // Successful send — reset the circuit breaker counter for this creator.
