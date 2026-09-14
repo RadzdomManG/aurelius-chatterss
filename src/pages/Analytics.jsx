@@ -4,6 +4,7 @@ import { DollarSign, TrendingUp, Clock, RefreshCw, BarChart3 } from "lucide-reac
 import EmptyState from "@/components/shared/EmptyState";
 import CreatorComparisonTable from "@/components/analytics/CreatorComparisonTable";
 import PpvConversionAnalytics from "@/components/analytics/PpvConversionAnalytics";
+import RevenueTab from "@/components/analytics/RevenueTab";
 import { useCreator } from "@/lib/creator-context";
 import CreatorSelector from "@/components/shared/CreatorSelector";
 
@@ -21,6 +22,7 @@ export default function Analytics() {
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [days, setDays] = React.useState(30);
+  const [tab, setTab] = React.useState("overview");
 
   const load = React.useCallback(async (selectedDays) => {
     setLoading(true);
@@ -127,7 +129,37 @@ export default function Analytics() {
           ))}
         </div>
 
-        {/* Summary cards */}
+        {/* View tabs */}
+        <div className="mb-6 flex items-center gap-1 border-b border-border">
+          {[
+            { id: "overview", label: "Overview" },
+            { id: "revenue", label: "Revenue" },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                tab === t.id
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "revenue" ? (
+          <RevenueTab
+            selectedCreatorId={selectedCreatorId}
+            days={days}
+            fanvueStats={allCreators.find(
+              (c) => c.creator_profile_id === selectedCreatorId || c.id === selectedCreatorId
+            )}
+          />
+        ) : (
+          <>
+            {/* Summary cards */}
         <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <SummaryCard label="Total Tips" value={fmtMoney(totals.tips)} icon={DollarSign} color="text-success" />
           <SummaryCard label="PPV Sales" value={fmtMoney(totals.ppv)} icon={TrendingUp} color="text-primary" />
@@ -144,6 +176,8 @@ export default function Analytics() {
         <p className="mt-6 text-center text-xs text-muted-foreground">
           Revenue from Fanvue read:insights · Response time from Aurelius message history
         </p>
+          </>
+        )}
       </div>
     </div>
   );
