@@ -108,7 +108,12 @@ export default async function (req: Request): Promise<Response> {
 
     try {
       const accessToken = await getValidAccessToken(connection, base44);
-      const params = new URLSearchParams({ startDate, endDate, granularity: "day" });
+      // Fanvue requires full ISO datetimes, not date-only strings (else it 400s
+      // with "Invalid startDate: must be a valid datetime"). Send the range
+      // start at 00:00:00Z and end at 23:59:59Z.
+      const fanvueStart = new Date(startDate + "T00:00:00Z").toISOString();
+      const fanvueEnd = new Date(endDate + "T23:59:59Z").toISOString();
+      const params = new URLSearchParams({ startDate: fanvueStart, endDate: fanvueEnd, granularity: "day" });
       const summary: any = await apiCall(`/v1/insights/earnings/summary?${params}`, accessToken);
 
       const breakdown = summary?.breakdownBySource || {};

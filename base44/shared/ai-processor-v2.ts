@@ -999,8 +999,11 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       // it if the fan buys the base first.
       if (ppvCents && (chosenSetId || (offerSource === "vault" && attachedMediaUuids.length > 0))) {
         const baseSentAt = new Date().toISOString();
-        const rescueOn = settings.rescue_enabled !== false;
-        const rescuePrice = rescueOn ? rescuePriceFor(ppvCents) : null;
+        // Rescue is disabled for base offers under $15 ($5/$10 bases) — the
+        // discount is too small to be credible and the $7 floor would invert.
+        const rawRescuePrice = settings.rescue_enabled !== false ? rescuePriceFor(ppvCents) : null;
+        const rescueOn = rawRescuePrice != null;
+        const rescuePrice = rescueOn ? rawRescuePrice : null;
         const minDelay = Math.max(settings.rescue_min_delay_minutes ?? 5, 1);
         const maxDelay = Math.max(settings.rescue_max_delay_minutes ?? 10, minDelay + 1);
         const delayMs = (minDelay + Math.random() * (maxDelay - minDelay)) * 60 * 1000;
@@ -1041,8 +1044,8 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         } catch (e) {}
       }
 
-      const rescueInfo = ppvCents && settings.rescue_enabled !== false
-        ? ` — rescue scheduled in ${Math.round((Math.max(settings.rescue_min_delay_minutes ?? 5, 1) + Math.random() * (Math.max(settings.rescue_max_delay_minutes ?? 10, 6) - Math.max(settings.rescue_min_delay_minutes ?? 5, 1))))} min at $${((ppvCents - 500) / 100).toFixed(2)}`
+      const rescueInfo = ppvCents && settings.rescue_enabled !== false && rescuePriceFor(ppvCents) != null
+        ? ` — rescue scheduled in ${Math.round((Math.max(settings.rescue_min_delay_minutes ?? 5, 1) + Math.random() * (Math.max(settings.rescue_max_delay_minutes ?? 10, 6) - Math.max(settings.rescue_min_delay_minutes ?? 5, 1))))} min at $${((rescuePriceFor(ppvCents) as number) / 100).toFixed(2)}`
         : "";
       await base44.asServiceRole.entities.ActivityLog.create({
         creator_profile_id: creatorProfileId,

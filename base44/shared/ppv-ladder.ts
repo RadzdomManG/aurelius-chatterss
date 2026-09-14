@@ -3,12 +3,13 @@
 // ladder-level advancement/demotion. Imported by ai-processor-v2 and
 // process-rescue-offers so both ends agree on every price.
 
-// Official base ladder: $12, $15, $25, $50, $80, $150, $250, $300, $400 (cents).
-export const BASE_LADDER_CENTS = [1200, 1500, 2500, 5000, 8000, 15000, 25000, 30000, 40000];
-export const BASE_MIN_CENTS = 1200; // $12 — normal/base PPV floor. NO normal offer may start below this.
+// Official base ladder: $5, $10, $15, $30, $45, $80, $150, $250, $400 (cents).
+export const BASE_LADDER_CENTS = [500, 1000, 1500, 3000, 4500, 8000, 15000, 25000, 40000];
+export const BASE_MIN_CENTS = 500; // $5 — normal/base PPV floor. NO normal offer may start below this.
 export const BASE_MAX_CENTS = 40000; // $400 — absolute ceiling.
-export const RESCUE_MIN_CENTS = 700; // $7 — rescue offers ONLY may go this low (from $12 → $7).
+export const RESCUE_MIN_CENTS = 700; // $7 — rescue offers ONLY may go this low (from $15 → $10).
 export const RESCUE_DISCOUNT_CENTS = 500; // $5 off.
+export const RESCUE_FLOOR_CENTS = 1500; // $15 — base offers below this get NO rescue (too cheap to discount credibly).
 
 export function getEnabledLadder(settings: any): number[] {
   let enabled = Array.isArray(settings?.ppv_ladder_enabled) ? settings.ppv_ladder_enabled : BASE_LADDER_CENTS;
@@ -46,13 +47,16 @@ export function advanceLevel(level: number, settings: any): number {
   return Math.min(level + 1, ladder.length - 1);
 }
 
-// Drop one level when a base+rescue cycle both fail (floor at level 0 = $12).
+// Drop one level when a base+rescue cycle both fail (floor at level 0 = $5).
 export function dropLevel(level: number): number {
   return Math.max(0, level - 1);
 }
 
-// Rescue price = base - $5, floored at $7. Only valid for rescue offers.
-export function rescuePriceFor(baseCents: number): number {
+// Rescue price = base - $5, floored at $7. Returns null for base offers under
+// $15 ($5 and $10 bases) — rescue is disabled there because the discount is too
+// small to be credible and the $7 floor would invert against a $5 base.
+export function rescuePriceFor(baseCents: number): number | null {
+  if (!Number.isFinite(baseCents) || baseCents < RESCUE_FLOOR_CENTS) return null;
   return Math.max(baseCents - RESCUE_DISCOUNT_CENTS, RESCUE_MIN_CENTS);
 }
 
@@ -63,9 +67,11 @@ export function isValidBasePrice(cents: number, settings: any): boolean {
 }
 
 // Validate a RESCUE price: must equal base-$5 (floored at $7) and be >= $7.
+// Returns false when rescue is not allowed for this base (under $15).
 export function isValidRescuePrice(rescueCents: number, baseCents: number): boolean {
   if (!Number.isFinite(rescueCents) || rescueCents < RESCUE_MIN_CENTS) return false;
-  return rescueCents === rescuePriceFor(baseCents);
+  const expected = rescuePriceFor(baseCents);
+  return expected != null && rescueCents === expected;
 }
 
 // Snap an arbitrary AI suggestion to the nearest enabled rung (used only as a

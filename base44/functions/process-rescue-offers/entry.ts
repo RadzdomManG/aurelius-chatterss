@@ -83,7 +83,7 @@ export default async function (req: Request): Promise<Response> {
 
         const rescuePrice = refreshed.rescue_price_cents;
         const basePrice = refreshed.base_price_cents || refreshed.price_cents;
-        if (!isValidRescuePrice(rescuePrice, basePrice)) {
+        if (rescuePrice == null || !isValidRescuePrice(rescuePrice, basePrice)) {
           try { await base44.asServiceRole.entities.PpvOfferTracking.update(offer.id, { rescue_status: "cancelled" }); } catch (e) {}
           cancelled++;
           continue;

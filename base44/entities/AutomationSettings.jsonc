@@ -34,7 +34,7 @@
     },
     "default_ppv_cents": {
       "type": "integer",
-      "default": 1200
+      "default": 500
     },
     "ppv_ladder_enabled": {
       "type": "array",
@@ -42,17 +42,17 @@
         "type": "integer"
       },
       "default": [
-        1200,
+        500,
+        1000,
         1500,
-        2500,
-        5000,
+        3000,
+        4500,
         8000,
         15000,
         25000,
-        30000,
         40000
       ],
-      "description": "Official base PPV ladder in cents: $12, $15, $25, $50, $80, $150, $250, $300, $400. Minimum rung is $12 (1200); maximum is $400 (40000). Rescue offers may go below $12 down to $7."
+      "description": "Official base PPV ladder in cents: $5, $10, $15, $30, $45, $80, $150, $250, $400. Minimum rung is $5 (500); maximum is $400 (40000). Rescue is disabled for base offers under $15."
     },
     "default_media_uuid": {
       "type": "string",
@@ -106,12 +106,12 @@
     "rescue_enabled": {
       "type": "boolean",
       "default": true,
-      "description": "When true, an unpurchased base PPV is automatically re-offered once at a -$5 discount after a random 5-10 minute delay."
+      "description": "When true, an unpurchased base PPV (priced $15 or above) is automatically re-offered once at a -$5 discount after a random 5-10 minute delay. Rescue is disabled for base offers under $15 ($5 and $10 bases)."
     },
     "rescue_discount_cents": {
       "type": "integer",
       "default": 500,
-      "description": "Discount applied to the base price for the rescue offer (default $5 = 500 cents). Rescue prices may go below the $12 base floor but never below $7."
+      "description": "Discount applied to the base price for the rescue offer (default $5 = 500 cents). Rescue prices may go below the $5 base floor down to $7, but only for bases of $15+."
     },
     "rescue_min_delay_minutes": {
       "type": "integer",
