@@ -39,6 +39,9 @@ const Activity = lazy(() => import('@/pages/Activity'));
 const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const PpvContent = lazy(() => import('@/pages/PpvContent'));
+const Onboarding = lazy(() => import('@/pages/Onboarding'));
+const Billing = lazy(() => import('@/pages/Billing'));
+const PlatformDashboard = lazy(() => import('@/pages/PlatformDashboard'));
 
 function PageSkeleton() {
   return (
@@ -85,6 +88,7 @@ const AuthenticatedApp = () => {
       <Route path="/forgot-password" element={<PageWrapper><ForgotPassword /></PageWrapper>} />
       <Route path="/reset-password" element={<PageWrapper><ResetPassword /></PageWrapper>} />
       <Route path="/fanvue/callback" element={<PageWrapper><FanvueCallback /></PageWrapper>} />
+      <Route path="/onboarding" element={<PageWrapper><Onboarding /></PageWrapper>} />
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppShell />}>
           <Route path="/" element={<PageWrapper><Inbox /></PageWrapper>} />
@@ -105,6 +109,8 @@ const AuthenticatedApp = () => {
           <Route path="/activity" element={<PageWrapper><Activity /></PageWrapper>} />
           <Route path="/diagnostics" element={<PageWrapper><Diagnostics /></PageWrapper>} />
           <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
+          <Route path="/billing" element={<PageWrapper><Billing /></PageWrapper>} />
+          <Route path="/platform" element={<PageWrapper><PlatformDashboard /></PageWrapper>} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />
