@@ -6,6 +6,7 @@ import { PRICE_FLOOR_CENTS, PRICE_CEILING_CENTS, clampPersonaPrice } from "./ppv
 import { validateMediaForPpv } from "./media-eligibility.ts";
 import { reconcileFanPpv } from "./ppv-reconcile.ts";
 import { hasExplicitMood, hasContentTease } from "./ppv-guards.ts";
+import { generateIdempotencyKey } from "./send-helpers.ts";
 
 /**
  * Server-side AI processor — the single canonical automation engine.
@@ -1048,6 +1049,18 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         }
       }
 
+      // === JOB-LEVEL IDEMPOTENCY (item 8) ===
+      // If a previous run already sent these replies (fanvue_sent_at is set),
+      // skip the send loop — the fan already received them. Prevents
+      // double-sends when a retried job re-enters after a post-send crash.
+      if (job.fanvue_sent_at) {
+        await base44.asServiceRole.entities.AIJob.update(job.id, {
+          status: "completed",
+          stage: "completed",
+        });
+        return { success: true, action: "already_sent", jobId: job.id };
+      }
+
       // === SEND VIA FANVUE WITH RETRY (multi-bubble) ===
       await base44.asServiceRole.entities.AIJob.update(job.id, { stage: "sending", attached_media_uuids: attachedMediaUuids });
 
@@ -1209,20 +1222,61 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
       } catch (e) {}
     }
 
-    await base44.asServiceRole.entities.AIJob.update(job.id, {
-      status: "failed",
-      last_error: errMsg,
-      error_code: code,
-      attempts: (job.attempts || 0) + 1,
-    });
+    // === DEAD-LETTER BACKOFF RETRY (item 5) ===
+    // Retryable errors (send/rate-limit/auth) get up to 3 automatic retries
+    // with exponential backoff by resetting the job to pending with a future
+    // available_at. The recovery watchdog picks it up after the backoff.
+    // Non-retryable errors (AI generation, persona, skip reasons) fail
+    // immediately and are promoted to dead_letter after 5 attempts by the
+    // watchdog.
+    const maxRetries = 3;
+    const currentAttempts = (job.attempts || 0) + 1;
+    const isRetryable = isSendFailure && currentAttempts < maxRetries;
+    if (isRetryable) {
+      const backoffMs = Math.pow(2, currentAttempts) * 10000; // 20s, 40s
+      const availableAt = new Date(Date.now() + backoffMs).toISOString();
+      try {
+        await base44.asServiceRole.entities.AIJob.update(job.id, {
+          status: "pending",
+          locked_at: null,
+          locked_by: null,
+          last_error: errMsg,
+          error_code: code,
+          attempts: currentAttempts,
+          available_at: availableAt,
+        });
+      } catch (e) {}
+      try {
+        await base44.asServiceRole.entities.ActivityLog.create({
+          creator_profile_id: creatorProfileId,
+          conversation_id: conversationId,
+          event_type: "ai.retry_scheduled",
+          status: "warning",
+          message: `Retry scheduled (attempt ${currentAttempts}/${maxRetries}) in ${Math.round(backoffMs / 1000)}s: ${errMsg}`,
+          metadata: { job_id: job.id, attempts: currentAttempts, backoff_ms: backoffMs },
+        });
+      } catch (e) {}
+      return { success: false, action: "retry_scheduled", jobId: job.id, retryInMs: backoffMs };
+    }
 
-    await base44.asServiceRole.entities.ActivityLog.create({
-      creator_profile_id: creatorProfileId,
-      conversation_id: conversationId,
-      event_type: "ai.failed",
-      status: "error",
-      message: errMsg,
-    });
+    try {
+      await base44.asServiceRole.entities.AIJob.update(job.id, {
+        status: "failed",
+        last_error: errMsg,
+        error_code: code,
+        attempts: currentAttempts,
+      });
+    } catch (e) {}
+
+    try {
+      await base44.asServiceRole.entities.ActivityLog.create({
+        creator_profile_id: creatorProfileId,
+        conversation_id: conversationId,
+        event_type: "ai.failed",
+        status: "error",
+        message: errMsg,
+      });
+    } catch (e) {}
 
     throw error;
   }

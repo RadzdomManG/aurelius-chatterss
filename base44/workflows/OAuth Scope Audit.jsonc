@@ -1,0 +1,44 @@
+{
+  "name": "OAuth Scope Audit",
+  "description": "Every 6 hours, checks all connected Fanvue accounts for required OAuth scopes (read:insights, read:media) and alerts on missing scopes before a sync or analytics pull breaks.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "0 */6 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Manila",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "oauth_scope_audit",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "audit": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "audit-oauth-scopes"
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Audit OAuth scopes",
+            "description": "Check all connections for read:insights + read:media"
+          }
+        }
+      }
+    ]
+  }
+}

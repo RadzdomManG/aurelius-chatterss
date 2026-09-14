@@ -1,0 +1,44 @@
+{
+  "name": "Webhook Health Check",
+  "description": "Every 30 minutes, monitors webhook signature failure rates and unmatched events, alerting the operator before Fanvue auto-disables the subscription.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "*/30 * * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Manila",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "webhook_health_check",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "check": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "webhook-health-check"
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Check webhook health",
+            "description": "Monitor signature failures + unmatched events"
+          }
+        }
+      }
+    ]
+  }
+}

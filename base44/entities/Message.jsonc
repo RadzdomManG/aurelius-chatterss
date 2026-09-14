@@ -14,6 +14,10 @@
     "external_uuid": {
       "type": "string"
     },
+    "idempotency_key": {
+      "type": "string",
+      "description": "Deterministic per-job-per-bubble key (jobId_bubbleIndex) so a retried AI job never re-sends a bubble that already landed on Fanvue, even when Fanvue returns no message UUID."
+    },
     "sender_type": {
       "type": "string",
       "enum": [

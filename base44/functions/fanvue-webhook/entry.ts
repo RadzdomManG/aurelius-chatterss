@@ -171,8 +171,44 @@ async function processMessageEvent(base44: any, event: any, eventType: string) {
     "-created_date",
     1
   );
-  const connection = connections[0];
-  if (!connection) return;
+  let connection = connections[0];
+
+  // Fallback (item 4): if no FanvueConnection matches the event's creator UUID,
+  // try matching via CreatorProfile.fanvue_user_uuid — the webhook event may
+  // carry the creator's user UUID while the connection stores a different
+  // external identifier. Fixes the known event→creator mapping mismatch.
+  if (!connection) {
+    try {
+      const creators = await base44.asServiceRole.entities.CreatorProfile.filter(
+        { fanvue_user_uuid: normalized.recipientUuid },
+        "-created_date",
+        1
+      );
+      if (creators[0]) {
+        const conns2 = await base44.asServiceRole.entities.FanvueConnection.filter(
+          { creator_profile_id: creators[0].id, status: "connected" },
+          "-created_date",
+          1
+        );
+        connection = conns2[0];
+      }
+    } catch (e) {}
+  }
+
+  if (!connection) {
+    // Quarantine unmatched event (item 4): log it instead of silently
+    // dropping so the operator can see which creator UUIDs have no mapped
+    // connection and fix the OAuth connection.
+    try {
+      await base44.asServiceRole.entities.ActivityLog.create({
+        event_type: "webhook.unmatched_creator",
+        status: "warning",
+        message: `No connected creator for UUID ${normalized.recipientUuid} — event quarantined`,
+        metadata: { eventType, recipientUuid: normalized.recipientUuid, msgUuid: normalized.msgUuid },
+      });
+    } catch (e) {}
+    return;
+  }
 
   const creatorProfileId = connection.creator_profile_id;
 

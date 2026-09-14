@@ -11,7 +11,7 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { processAIJob, resolveAutomationMode } from "../../shared/ai-processor-v2.ts";
 import { isPaused } from "../../shared/app-config.ts";
-import { getValidAccessToken } from "../../shared/fanvue-api.ts";
+import { getValidAccessToken, getMe } from "../../shared/fanvue-api.ts";
 import { sweepPendingUnsends } from "../../shared/presence-greet.ts";
 // Uses the canonical ai-processor-v2 (no false supersession cancellation).
 
@@ -83,6 +83,41 @@ export default async function (req: Request): Promise<Response> {
     }
   } catch (e) {}
 
+  // === 1d. Circuit-breaker auto-recovery probe (item 6) ===
+  // For creators in "error" state (circuit breaker tripped), attempt a
+  // lightweight Fanvue API call. If it succeeds, the channel is healthy
+  // again — reset the breaker counter and restore the creator to "active".
+  let breakersReset = 0;
+  try {
+    const errorCreators = await base44.asServiceRole.entities.CreatorProfile.filter({ status: "error" }, "-created_date", 50);
+    for (const creator of errorCreators) {
+      try {
+        const conns = await base44.asServiceRole.entities.FanvueConnection.filter(
+          { creator_profile_id: creator.id, status: "connected" },
+          "-created_date", 1
+        );
+        const conn = conns[0];
+        if (!conn) continue;
+        const accessToken = await getValidAccessToken(conn, base44);
+        await getMe(accessToken);
+        const settingsList = await base44.asServiceRole.entities.AutomationSettings.filter(
+          { creator_profile_id: creator.id }, "-created_date", 1
+        );
+        if (settingsList[0]) {
+          await base44.asServiceRole.entities.AutomationSettings.update(settingsList[0].id, { consecutive_send_failures: 0 });
+        }
+        await base44.asServiceRole.entities.CreatorProfile.update(creator.id, { status: "active" });
+        breakersReset++;
+        await base44.asServiceRole.entities.ActivityLog.create({
+          creator_profile_id: creator.id,
+          event_type: "ai.circuit_breaker_recovered",
+          status: "success",
+          message: `Circuit breaker auto-recovered — Fanvue channel healthy, creator restored to active`,
+        });
+      } catch (e: any) {}
+    }
+  } catch (e) {}
+
   // === 2. Recover stuck "processing" jobs ===
   const cutoff = new Date(Date.now() - STUCK_MS).toISOString();
   const stuck = await base44.asServiceRole.entities.AIJob.filter({ status: "processing" }, "-locked_at", 100);
@@ -100,7 +135,14 @@ export default async function (req: Request): Promise<Response> {
 
   // === 3. Recover stale "pending" jobs ===
   const pending = await base44.asServiceRole.entities.AIJob.filter({ status: "pending" }, "created_date", 50);
-  const pendingStale = pending.filter((j) => new Date(j.created_date) < new Date(Date.now() - PENDING_STALE_MS));
+  const pendingStale = pending.filter((j) => {
+    const isStale = new Date(j.created_date) < new Date(Date.now() - PENDING_STALE_MS);
+    if (!isStale) return false;
+    // Respect exponential backoff: don't process a pending job whose
+    // available_at is still in the future (set by the dead-letter retry path).
+    if (j.available_at && new Date(j.available_at) > new Date()) return false;
+    return true;
+  });
   for (const job of pendingStale) {
     try {
       await processAIJob(base44, job.conversation_id, job.id, job.trigger_message_uuid);
@@ -237,8 +279,8 @@ export default async function (req: Request): Promise<Response> {
   await base44.asServiceRole.entities.ActivityLog.create({
     event_type: "runner.recovery",
     status: failed > 0 ? "warning" : "success",
-    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${backfilled} backfilled, ${deadLettered} dead-lettered, ${greetsUnsent} greets unsent, ${failed} failed`,
-    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, backfilled, backfillSkipped, deadLettered, greetsUnsent, greetUnsendsFailed, failed, stuckFound: stuckToRecover.length },
+    message: `Recovery: ${recovered} stuck, ${pendingRecovered} pending, ${needsApprovalConverted} auto-converted, ${duplicatesCancelled} dupes cancelled, ${msgDeduped} msgs deduped, ${backfilled} backfilled, ${deadLettered} dead-lettered, ${breakersReset} breakers reset, ${greetsUnsent} greets unsent, ${failed} failed`,
+    metadata: { recovered, pendingRecovered, needsApprovalConverted, duplicatesCancelled, msgDeduped, backfilled, backfillSkipped, deadLettered, breakersReset, greetsUnsent, greetUnsendsFailed, failed, stuckFound: stuckToRecover.length },
   });
 
   return Response.json({
@@ -251,6 +293,7 @@ export default async function (req: Request): Promise<Response> {
     backfilled,
     backfillSkipped,
     deadLettered,
+    breakersReset,
     failed,
     stuckFound: stuckToRecover.length,
   });
