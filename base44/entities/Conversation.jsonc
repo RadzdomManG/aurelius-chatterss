@@ -83,6 +83,20 @@
     "ppv_offer_count": {
       "type": "integer",
       "default": 0
+    },
+    "summary": {
+      "type": "string",
+      "description": "AI-generated recap of older conversation messages, injected into the prompt so the persona can recall topics/facts from a week-long conversation. Regenerated periodically."
+    },
+    "summary_generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the conversation summary was last regenerated."
+    },
+    "summary_message_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Total message count at the time the summary was last generated, used to detect when regeneration is due."
     }
   },
   "required": [
