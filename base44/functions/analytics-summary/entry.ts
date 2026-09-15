@@ -72,6 +72,29 @@ export default async function (req: Request): Promise<Response> {
   }
 
   // ---- Per-creator Fanvue insights ----
+  // When a specific creator is selected on the frontend, only that creator's
+  // Fanvue insights are fetched (one API call instead of N). All other roster
+  // entries are returned with connected flag intact but no Fanvue earnings
+  // data, so the comparison table still shows the full roster.
+  const selectedCreatorId = body.creatorProfileId || null;
+  const isTransient = (msg: string) => /timeout|5\d\d|429|rate.?limit|network|econnreset|aborted/i.test(msg || "");
+
+  async function fetchInsightsWithRetry(accessToken: string): Promise<any> {
+    const fanvueStart = new Date(startDate + "T00:00:00Z").toISOString();
+    const fanvueEnd = new Date(endDate + "T23:59:59Z").toISOString();
+    const params = new URLSearchParams({ startDate: fanvueStart, endDate: fanvueEnd, granularity: "day" });
+    try {
+      return await apiCall(`/v1/insights/earnings/summary?${params}`, accessToken);
+    } catch (err: any) {
+      // Single retry on transient failures (timeout / 5xx / 429 / network).
+      if (isTransient(err.message)) {
+        await new Promise((r) => setTimeout(r, 1500));
+        return await apiCall(`/v1/insights/earnings/summary?${params}`, accessToken);
+      }
+      throw err;
+    }
+  }
+
   const results = await Promise.all(creators.map(async (creator: any) => {
     const connection = connections.find((c: any) => c.creator_profile_id === creator.id && c.status === "connected");
     const rs = responseStats[creator.id] || { total: 0, count: 0 };
@@ -106,15 +129,16 @@ export default async function (req: Request): Promise<Response> {
       return base;
     }
 
+    // Skip the Fanvue API call for non-selected creators when a specific
+    // creator is requested — keeps the call fast (one Fanvue hit, not N).
+    if (selectedCreatorId && creator.id !== selectedCreatorId) {
+      base.insights_error = "skipped";
+      return base;
+    }
+
     try {
       const accessToken = await getValidAccessToken(connection, base44);
-      // Fanvue requires full ISO datetimes, not date-only strings (else it 400s
-      // with "Invalid startDate: must be a valid datetime"). Send the range
-      // start at 00:00:00Z and end at 23:59:59Z.
-      const fanvueStart = new Date(startDate + "T00:00:00Z").toISOString();
-      const fanvueEnd = new Date(endDate + "T23:59:59Z").toISOString();
-      const params = new URLSearchParams({ startDate: fanvueStart, endDate: fanvueEnd, granularity: "day" });
-      const summary: any = await apiCall(`/v1/insights/earnings/summary?${params}`, accessToken);
+      const summary: any = await fetchInsightsWithRetry(accessToken);
 
       const breakdown = summary?.breakdownBySource || {};
       base.tips_cents = breakdown.tips?.net || breakdown.tip?.net || breakdown.tips?.gross || 0;

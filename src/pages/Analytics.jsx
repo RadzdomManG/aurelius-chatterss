@@ -1,6 +1,6 @@
 import React from "react";
 import { base44 } from "@/api/base44Client";
-import { DollarSign, TrendingUp, Clock, RefreshCw, BarChart3 } from "lucide-react";
+import { DollarSign, TrendingUp, Clock, RefreshCw, BarChart3, AlertTriangle } from "lucide-react";
 import EmptyState from "@/components/shared/EmptyState";
 import CreatorComparisonTable from "@/components/analytics/CreatorComparisonTable";
 import PpvConversionAnalytics from "@/components/analytics/PpvConversionAnalytics";
@@ -20,24 +20,32 @@ const RANGES = [
 export default function Analytics() {
   const { selectedCreatorId } = useCreator();
   const [data, setData] = React.useState(null);
+  const [error, setError] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [days, setDays] = React.useState(30);
   const [tab, setTab] = React.useState("overview");
 
-  const load = React.useCallback(async (selectedDays) => {
+  const load = React.useCallback(async (selectedDays, creatorId) => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await base44.functions.invoke("analytics-summary", { days: selectedDays });
+      const res = await base44.functions.invoke("analytics-summary", {
+        days: selectedDays,
+        creatorProfileId: creatorId || null,
+      });
+      if (res && res.error) throw new Error(res.error);
       setData(res);
     } catch (err) {
       console.error("Analytics load failed:", err);
+      setError(err.message || "Failed to load analytics. Please try again.");
+      setData(null);
     } finally {
       setLoading(false);
     }
   }, []);
 
   React.useEffect(() => {
-    load(days);
+    load(days, selectedCreatorId);
   }, [days, load, selectedCreatorId]);
 
   // Scope the comparison table to the selected creator (with a full roster
@@ -73,6 +81,32 @@ export default function Analytics() {
     );
   }
 
+  if (error && !data) {
+    return (
+      <div className="h-full overflow-y-auto scrollbar-thin">
+        <div className="mx-auto max-w-md px-6 py-16">
+          <div className="rounded-xl border border-destructive/30 bg-card p-6 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+              <AlertTriangle className="h-6 w-6 text-destructive" />
+            </div>
+            <h2 className="mb-1 font-heading text-lg text-foreground">Couldn't load analytics</h2>
+            <p className="mb-5 text-sm text-muted-foreground">
+              {error}
+            </p>
+            <button
+              onClick={() => load(days, selectedCreatorId)}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Try again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (connectedCreators.length === 0) {
     return (
       <div className="h-full overflow-y-auto scrollbar-thin">
@@ -102,7 +136,7 @@ export default function Analytics() {
           <div className="flex items-center gap-2">
             <CreatorSelector />
             <button
-              onClick={() => load(days)}
+              onClick={() => load(days, selectedCreatorId)}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:opacity-50"
             >
