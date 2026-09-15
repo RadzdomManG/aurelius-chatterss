@@ -20,7 +20,7 @@ export default function Subscribers() {
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [fanMap, setFanMap] = React.useState({});
-  const [spending, setSpending] = React.useState({});
+  const [syncing, setSyncing] = React.useState(false);
 
   const load = React.useCallback(async () => {
     if (!connection) return;
@@ -40,7 +40,7 @@ export default function Subscribers() {
 
   // Load our Fan records (which carry total_spent_cents synced from Fanvue)
   // so each subscriber row shows real spend under their name.
-  React.useEffect(() => {
+  const reloadFans = React.useCallback(async () => {
     if (!creator?.id) { setFanMap({}); return; }
     let active = true;
     (async () => {
@@ -59,6 +59,24 @@ export default function Subscribers() {
     return () => { active = false; };
   }, [creator?.id]);
 
+  React.useEffect(() => { reloadFans(); }, [reloadFans]);
+
+  const syncSpending = async () => {
+    if (!creator?.id) return;
+    try {
+      setSyncing(true);
+      const res = await base44.functions.invoke("sync-fan-spending", { creatorProfileId: creator.id });
+      if (res?.error) throw new Error(res.error);
+      const count = res?.fansUpdated || 0;
+      toast.success(count > 0 ? `Synced ${count} fan${count === 1 ? "" : "s"}' spending from Fanvue` : "Spending synced — no new data to update");
+      await reloadFans();
+    } catch (e) {
+      toast.error(e?.message || "Failed to sync spending from Fanvue");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   if (loadingConn) return <div className="flex h-full items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-primary" /></div>;
   if (!connection) return <div className="h-full p-8"><EmptyState icon={Users} title="Connect Fanvue" description="Connect a Fanvue account to view subscribers and followers." actionLabel="Go to Models" actionTo="/models" /></div>;
   if (!(connection.granted_scopes || []).includes("read:fan")) return <div className="h-full p-8"><ScopeGate missing={["read:fan"]} /></div>;
@@ -68,7 +86,17 @@ export default function Subscribers() {
       <div className="mx-auto max-w-3xl px-6 py-8">
         <div className="mb-1 flex items-center justify-between gap-3">
           <h1 className="font-heading text-3xl text-foreground">Audience</h1>
-          <CreatorSelector />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={syncSpending}
+              disabled={syncing}
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              <DollarSign className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Syncing…" : "Sync spending"}
+            </button>
+            <CreatorSelector />
+          </div>
         </div>
         <p className="mb-6 text-sm text-muted-foreground">Subscribers and followers</p>
 
@@ -83,6 +111,31 @@ export default function Subscribers() {
             </button>
           ))}
         </div>
+
+        {(() => {
+          const fans = Object.values(fanMap).filter((f) => (f.total_spent_cents || 0) > 0).sort((a, b) => (b.total_spent_cents || 0) - (a.total_spent_cents || 0));
+          const totalSpend = fans.reduce((s, f) => s + (f.total_spent_cents || 0), 0);
+          if (fans.length === 0) return null;
+          return (
+            <div className="mb-6 rounded-lg border border-border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="flex items-center gap-2 font-heading text-lg text-foreground"><DollarSign className="h-4 w-4 text-success" /> Spenders</h2>
+                <span className="text-xs text-muted-foreground">{fans.length} spender{fans.length === 1 ? "" : "s"} · {money(totalSpend)} total</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {fans.slice(0, 3).map((f, i) => (
+                  <div key={f.id} className="rounded-md border border-border bg-background p-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-medium text-muted-foreground">#{i + 1}</span>
+                      <p className="truncate text-sm font-medium text-foreground">{f.display_name || f.handle || "Unknown"}</p>
+                    </div>
+                    <p className="mt-0.5 text-lg font-heading text-success">{money(f.total_spent_cents)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {loading ? (
           <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-lg bg-muted" />)}</div>

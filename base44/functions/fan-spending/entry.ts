@@ -134,6 +134,17 @@ export default async function (req: Request): Promise<Response> {
     .sort((a, b) => new Date(a.at || 0).getTime() - new Date(b.at || 0).getTime())[0];
   const sinceDate = earliest?.at || fan.created_date || null;
 
+  // Persist the authoritative total back onto the Fan record so the
+  // Subscribers list, AI context, and future loads don't need a fresh
+  // Fanvue call. Best-effort — never blocks the response.
+  const computedTotal = totalPpvCents + totalTipCents;
+  const bestTotal = Math.max(totalSpentCents, computedTotal);
+  if (bestTotal !== totalSpentCents) {
+    try {
+      await base44.asServiceRole.entities.Fan.update(fanId, { total_spent_cents: bestTotal });
+    } catch (e) {}
+  }
+
   return Response.json({
     fanId,
     totalSpentCents,
