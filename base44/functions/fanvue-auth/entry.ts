@@ -207,6 +207,16 @@ export default async function (req: Request): Promise<Response> {
       try {
         await base44.asServiceRole.functions.invoke("fanvue-sync", { creatorProfileId: creatorProfile.id, fullSync: true });
       } catch (e) {}
+      // Sync fan lifetime spend totals from Fanvue so the inbox "$X spent"
+      // lines are real immediately after (re)connect, not stale $0 placeholders.
+      try {
+        await base44.asServiceRole.functions.invoke("sync-fan-spending", { creatorProfileId: creatorProfile.id });
+      } catch (e) {}
+      // Sync vault media so PPV auto-vault + the Media page are current right
+      // after reconnect — no manual "sync vault" step required.
+      try {
+        await base44.asServiceRole.functions.invoke("fanvue-vault-sync", { creatorProfileId: creatorProfile.id });
+      } catch (e) {}
 
       return Response.json({
         success: true,

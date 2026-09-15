@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Filter } from "lucide-react";
+import { Search, Filter, DollarSign } from "lucide-react";
 import ConversationRow from "@/components/inbox/ConversationRow";
 import CreatorSelector from "@/components/shared/CreatorSelector";
 
@@ -22,6 +22,8 @@ export default function ConversationList({
   loading,
   hasConnection,
   realtimeStatus,
+  onRefreshSpend,
+  refreshingSpend,
 }) {
   const [search, setSearch] = React.useState("");
   const [filter, setFilter] = React.useState("All");
@@ -91,6 +93,15 @@ export default function ConversationList({
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="font-heading text-xl text-foreground">Inbox</h2>
         <div className="flex items-center gap-2">
+          <button
+            onClick={onRefreshSpend}
+            disabled={refreshingSpend || !hasConnection}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-50"
+            title="Sync fan lifetime spend from Fanvue"
+          >
+            <DollarSign className={`h-3.5 w-3.5 ${refreshingSpend ? "animate-spin" : "text-success"}`} />
+            {refreshingSpend ? "Syncing…" : "Refresh spend"}
+          </button>
           <CreatorSelector />
           <span className="inline-flex items-center gap-1 text-xs">
             <span className={`h-1.5 w-1.5 rounded-full ${realtimeStatus === "live" ? "bg-success" : "bg-warning animate-pulse"}`} />

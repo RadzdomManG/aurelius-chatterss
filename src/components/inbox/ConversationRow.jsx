@@ -73,11 +73,15 @@ export default function ConversationRow({ conversation, fan, isSelected, onClick
           <span className="text-xs text-muted-foreground/70">
             @{fan?.handle || "unknown"}
           </span>
-          {fan?.total_spent_cents > 0 && (
-            <span className="text-xs text-success">
-              ${(fan.total_spent_cents / 100).toFixed(0)}
-            </span>
-          )}
+          {(() => {
+            const cents = fan?.total_spent_cents || 0;
+            const dollars = cents % 100 === 0 ? `${cents / 100}` : (cents / 100).toFixed(2);
+            return (
+              <span className={`text-xs ${cents > 0 ? "text-success" : "text-muted-foreground/60"}`}>
+                ${dollars} spent
+              </span>
+            );
+          })()}
           {conversation.unread_count > 0 && (
             <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
               {conversation.unread_count}

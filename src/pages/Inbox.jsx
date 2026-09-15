@@ -44,6 +44,7 @@ export default function Inbox() {
   const [sending, setSending] = React.useState(false);
   const [aiState, setAiState] = React.useState(null);
   const [realtimeStatus, setRealtimeStatus] = React.useState("live");
+  const [refreshingSpend, setRefreshingSpend] = React.useState(false);
   const [automationSettings, setAutomationSettings] = React.useState(null);
   // All conversation ids belonging to the currently selected fan. A new
   // message can land in a DUPLICATE conversation record for the same fan
@@ -684,6 +685,28 @@ export default function Inbox() {
     }
   };
 
+  // Pull fresh lifetime spend totals from the Fanvue spending API for the
+  // selected creator, then reload the local fan map so every "$X spent" line
+  // in the conversation list updates with real Fanvue data.
+  const handleRefreshSpend = async () => {
+    if (!creator?.id) return;
+    try {
+      setRefreshingSpend(true);
+      const res = await base44.functions.invoke("sync-fan-spending", { creatorProfileId: creator.id });
+      if (res?.error) throw new Error(res.error);
+      const count = res?.fansUpdated || 0;
+      toast.success(count > 0 ? `Synced ${count} fan${count === 1 ? "" : "s"}' spend from Fanvue` : "Spend synced from Fanvue");
+      const fanList = await base44.entities.Fan.filter({ creator_profile_id: creator.id }, "-created_date", 500);
+      const fanMap = {};
+      fanList.forEach((f) => { fanMap[f.id] = f; });
+      setFans(fanMap);
+    } catch (e) {
+      toast.error(e?.message || "Failed to sync spend from Fanvue");
+    } finally {
+      setRefreshingSpend(false);
+    }
+  };
+
   const handleRetryMessage = async (message) => {
     try {
       setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, send_status: "pending" } : m)));
@@ -716,6 +739,8 @@ export default function Inbox() {
           loading={loadingConvos}
           hasConnection={hasConnection}
           realtimeStatus={realtimeStatus}
+          onRefreshSpend={handleRefreshSpend}
+          refreshingSpend={refreshingSpend}
         />
       </ErrorBoundary>
       {selectedConversation ? (
