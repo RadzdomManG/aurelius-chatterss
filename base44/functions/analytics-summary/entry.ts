@@ -16,6 +16,19 @@ function dateStr(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+// Race a promise against a timeout so a slow Fanvue API never blocks the
+// whole response — the function always returns local data (response times,
+// recent PPV) within a bounded time, with insights_error set when Fanvue
+// is too slow or fails.
+function withTimeout<T>(promise: Promise<T>, ms: number, label = "operation"): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out`)), ms)
+    ),
+  ]);
+}
+
 export default async function (req: Request): Promise<Response> {
   let body: any = {};
   try { body = await req.json(); } catch (e) {}
@@ -137,8 +150,8 @@ export default async function (req: Request): Promise<Response> {
     }
 
     try {
-      const accessToken = await getValidAccessToken(connection, base44);
-      const summary: any = await fetchInsightsWithRetry(accessToken);
+      const accessToken = await withTimeout(getValidAccessToken(connection, base44), 8000, "token refresh");
+      const summary: any = await withTimeout(fetchInsightsWithRetry(accessToken), 9000, "insights fetch");
 
       const breakdown = summary?.breakdownBySource || {};
       base.tips_cents = breakdown.tips?.net || breakdown.tip?.net || breakdown.tips?.gross || 0;

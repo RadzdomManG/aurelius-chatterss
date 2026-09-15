@@ -1,6 +1,7 @@
 import React from "react";
 import { toast } from "sonner";
-import { Users } from "lucide-react";
+import { Users, DollarSign } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 import { fanvueCall, useConnection, money, fmtDate } from "@/lib/fanvue-gateway";
 import ScopeGate from "@/components/shared/ScopeGate";
 import EmptyState from "@/components/shared/EmptyState";
@@ -18,6 +19,8 @@ export default function Subscribers() {
   const [tab, setTab] = React.useState("subscribers");
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
+  const [fanMap, setFanMap] = React.useState({});
+  const [spending, setSpending] = React.useState({});
 
   const load = React.useCallback(async () => {
     if (!connection) return;
@@ -34,6 +37,27 @@ export default function Subscribers() {
   }, [connection, tab]);
 
   React.useEffect(() => { load(); }, [load]);
+
+  // Load our Fan records (which carry total_spent_cents synced from Fanvue)
+  // so each subscriber row shows real spend under their name.
+  React.useEffect(() => {
+    if (!creator?.id) { setFanMap({}); return; }
+    let active = true;
+    (async () => {
+      try {
+        const fans = await base44.entities.Fan.filter({ creator_profile_id: creator.id }, "-total_spent_cents", 500);
+        if (!active) return;
+        const map = {};
+        for (const f of (fans || [])) {
+          if (f.external_uuid) map[f.external_uuid] = f;
+        }
+        setFanMap(map);
+      } catch (e) {
+        if (active) setFanMap({});
+      }
+    })();
+    return () => { active = false; };
+  }, [creator?.id]);
 
   if (loadingConn) return <div className="flex h-full items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-primary" /></div>;
   if (!connection) return <div className="h-full p-8"><EmptyState icon={Users} title="Connect Fanvue" description="Connect a Fanvue account to view subscribers and followers." actionLabel="Go to Models" actionTo="/models" /></div>;
@@ -79,16 +103,29 @@ export default function Subscribers() {
                     <p className="truncate text-sm font-medium text-foreground">{r.displayName || r.handle}</p>
                     <p className="text-xs text-muted-foreground">@{r.handle} · {fmtDate(r.firstSubscribedAt || r.registeredAt)}</p>
                   </div>
+                  {(() => {
+                    const fan = fanMap[r.uuid];
+                    const spent = fan?.total_spent_cents || 0;
+                    const tier = spent >= 10000 ? "high" : spent >= 3000 ? "mid" : spent > 0 ? "low" : "none";
+                    const tierLabel = tier === "high" ? "Top spender" : tier === "mid" ? "Spender" : tier === "low" ? "Light" : "New";
+                    const tierStyle = tier === "high" ? "bg-warning/15 text-warning" : tier === "mid" ? "bg-success/15 text-success" : tier === "low" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground";
+                    return (spent > 0 || tab === "followers") && (
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${tierStyle}`}>{tierLabel}</span>
+                    );
+                  })()}
                   {tab === "subscribers" ? (
                     <div className="flex shrink-0 items-center gap-3">
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">{money(sub.amountPaid)} paid</p>
                         <p className="text-xs text-muted-foreground">{money(sub.price)}/mo</p>
+                        {(() => { const f = fanMap[r.uuid]; return f?.total_spent_cents ? <p className="text-xs font-medium text-foreground">{money(f.total_spent_cents)} total</p> : null; })()}
                       </div>
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[sub.status] || "bg-muted text-muted-foreground"}`}>{sub.status || "—"}</span>
                     </div>
                   ) : (
-                    r.isTopSpender && <span className="rounded-full bg-warning/15 px-2 py-0.5 text-xs text-warning">Top spender</span>
+                    <div className="shrink-0 text-right">
+                      {(() => { const f = fanMap[r.uuid]; return f?.total_spent_cents ? <p className="text-xs font-medium text-foreground">{money(f.total_spent_cents)} spent</p> : <p className="text-xs text-muted-foreground">$0.00</p>; })()}
+                    </div>
                   )}
                 </div>
               );

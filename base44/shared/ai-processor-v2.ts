@@ -729,10 +729,35 @@ Respond ONLY with a JSON object:
   "memory_updates": [{"key": "...", "value": "..."}]
 }`;
 
+    // Spending profile — tells the AI exactly who it's selling to so it can
+    // price and pitch to the fan's actual wallet, not a blind guess.
+    const fanSpendingCtx = [
+      fan?.total_spent_cents ? `Total spent on you: $${(fan.total_spent_cents / 100).toFixed(2)}` : "Total spent on you: $0.00 (no purchases yet)",
+      fan?.highest_full_price_purchase_cents ? `Highest full-price purchase: $${(fan.highest_full_price_purchase_cents / 100).toFixed(2)}` : null,
+      fan?.highest_discount_purchase_cents ? `Highest discount purchase: $${(fan.highest_discount_purchase_cents / 100).toFixed(2)}` : null,
+      fan?.consecutive_full_price_purchases ? `Consecutive full-price unlocks: ${fan.consecutive_full_price_purchases}` : null,
+      fan?.consecutive_failed_offers ? `Consecutive failed offers (no purchase): ${fan.consecutive_failed_offers}` : null,
+      fan?.current_base_price_cents ? `Current PPV price level: $${(fan.current_base_price_cents / 100).toFixed(2)}` : null,
+      fan?.last_ppv_purchased_at ? `Last PPV purchased: ${new Date(fan.last_ppv_purchased_at).toLocaleDateString()}` : null,
+      fan?.last_ppv_sent_at ? `Last PPV offered: ${new Date(fan.last_ppv_sent_at).toLocaleDateString()}` : null,
+    ].filter(Boolean).join("\n");
+    const spenderTier = (fan?.total_spent_cents || 0) >= 10000
+      ? "This fan is a HIGH SPENDER — they buy regularly. You can be confident with higher-priced PPV offers ($30–$80+) and skip the hard-sell; they already trust you."
+      : (fan?.total_spent_cents || 0) >= 3000
+        ? "This fan is a MODERATE SPENDER — they've purchased before. Price PPV in the mid-range ($15–$30) and keep building the relationship."
+        : (fan?.total_spent_cents || 0) > 0
+          ? "This fan is a LIGHT SPENDER — they've spent a little. Use lower-priced PPV ($5–$15) to encourage a second purchase and build confidence."
+          : "This fan has NOT spent yet — they are a NEW or FREE fan. Focus on building rapport and desire before any PPV. Do not rush a sale; make them want it first.";
+
     const userPrompt = `FAN INFORMATION:
 Name: ${fan?.display_name || "Unknown"}
 Handle: ${fan?.handle || "unknown"}
 Subscription status: ${fan?.subscription_status || "unknown"}
+
+SPENDING HISTORY (use this to calibrate your PPV price and sales approach):
+${fanSpendingCtx}
+
+${spenderTier}
 
 KNOWN FACTS ABOUT THIS FAN (memory):
 ${memoryText || "No known facts yet — this may be a new fan."}

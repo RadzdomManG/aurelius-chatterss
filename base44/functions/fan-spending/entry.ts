@@ -74,6 +74,11 @@ export default async function (req: Request): Promise<Response> {
 
   const accessToken = await getValidAccessToken(connection, base44);
 
+  // Bound each Fanvue call so a slow API never hangs the Inspector — the
+  // DB-known total is always returned even when Fanvue is unreachable.
+  const withTimeout = <T>(p: Promise<T>, ms: number, label: string) =>
+    Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${label} timed out`)), ms))]);
+
   // Each Fanvue call is independent — a failure on one does not blank the other.
   let fanProfile: any = null;
   let spendingItems: any[] = [];
@@ -81,13 +86,14 @@ export default async function (req: Request): Promise<Response> {
   let spendError: string | null = null;
 
   try {
-    fanProfile = await apiCall(`/v1/insights/fans/${encodeURIComponent(userUuid)}`, accessToken);
+    fanProfile = await withTimeout(apiCall(`/v1/insights/fans/${encodeURIComponent(userUuid)}`, accessToken), 8000, "fan profile");
   } catch (e: any) { fanError = e.message; }
 
   try {
-    const spendRes: any = await apiCall(
-      `/v1/insights/spending?fanUuid=${encodeURIComponent(userUuid)}&size=50`,
-      accessToken
+    const spendRes: any = await withTimeout(
+      apiCall(`/v1/insights/spending?fanUuid=${encodeURIComponent(userUuid)}&size=50`, accessToken),
+      8000,
+      "spending"
     );
     spendingItems = Array.isArray(spendRes?.data)
       ? spendRes.data
