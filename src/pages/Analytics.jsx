@@ -18,7 +18,7 @@ const RANGES = [
 ];
 
 export default function Analytics() {
-  const { selectedCreatorId } = useCreator();
+  const { selectedCreatorId, loaded: creatorsLoaded } = useCreator();
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
@@ -45,8 +45,12 @@ export default function Analytics() {
   }, []);
 
   React.useEffect(() => {
+    // Wait for the creator selector to resolve the default (connected) creator
+    // before the first call, so we always hit the fast single-creator path
+    // instead of the slow all-creators path that sits near the timeout edge.
+    if (!creatorsLoaded) return;
     load(days, selectedCreatorId);
-  }, [days, load, selectedCreatorId]);
+  }, [days, load, selectedCreatorId, creatorsLoaded]);
 
   // Scope the comparison table to the selected creator (with a full roster
   // view available when none is chosen). Summary cards always reflect the
