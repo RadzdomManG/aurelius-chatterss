@@ -25,7 +25,7 @@ export default function MessageComposer({
   const [ppvAmount, setPpvAmount] = React.useState("");
   const [selectedMediaUuids, setSelectedMediaUuids] = React.useState([]);
   const [previewEnabled, setPreviewEnabled] = React.useState(false);
-  const [ppvPreviewAllowed, setPpvPreviewAllowed] = React.useState(false);
+  const ppvPreviewAllowed = false; // Full-lock PPV: no free first-image previews.
 
   // Fetch the creator's PPV preview setting once — gates whether the free-
   // preview checkbox is offered. Default (setting off) = full lock.
@@ -35,7 +35,7 @@ export default function MessageComposer({
     (async () => {
       try {
         const list = await base44.entities.AutomationSettings.filter({ creator_profile_id: creatorProfileId }, "-created_date", 1);
-        if (!cancelled) setPpvPreviewAllowed(!!(list[0] && list[0].ppv_preview_enabled === true));
+        if (!cancelled) { /* Full-lock PPV keeps previews disabled. */ }
       } catch (e) {}
     })();
     return () => { cancelled = true; };
