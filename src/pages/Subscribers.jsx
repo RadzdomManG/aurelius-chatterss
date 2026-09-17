@@ -28,7 +28,8 @@ export default function Subscribers() {
       setLoading(true);
       const op = tab === "subscribers" ? "listSubscribers_v1_experimental" : "listFollowers_v1_experimental";
       const res = await fanvueCall(op, { query: { size: 50 }, creatorProfileId: creator?.id });
-      setRows(res?.data?.data || []);
+      const payload = res?.data || res;
+      setRows(payload?.data?.data || []);
     } catch (e) {
       if (e?.code !== "MISSING_SCOPE") toast.error(e?.error || "Failed to load");
     } finally {
