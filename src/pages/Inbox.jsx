@@ -716,7 +716,7 @@ export default function Inbox() {
         body: message.body,
         ppvCents: message.ppv_cents || null,
         mediaUuids: Array.isArray(message.media) && message.media.length ? message.media : null,
-        mediaPreviewUuid: Array.isArray(message.media) && message.media.length ? message.media[0] : null,
+        mediaPreviewUuid: null,
         messageId: message.id,
       });
       setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, send_status: "sent" } : m)));
