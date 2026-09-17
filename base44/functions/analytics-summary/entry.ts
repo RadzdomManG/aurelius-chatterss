@@ -154,10 +154,8 @@ export default async function (req: Request): Promise<Response> {
       const summary: any = await withTimeout(fetchInsightsWithRetry(accessToken), 9000, "insights fetch");
 
       const breakdown = summary?.breakdownBySource || {};
-      base.tips_cents = breakdown.tips?.net || breakdown.tip?.net || breakdown.tips?.gross || 0;
-      base.ppv_cents =
-        breakdown.payToView?.net || breakdown.ppv?.net || breakdown.ppvs?.net ||
-        breakdown.payToView?.gross || breakdown.ppv?.gross || 0;
+      base.tips_cents = breakdown.tips?.net ?? 0;
+      base.ppv_cents = (breakdown.messages?.net ?? 0) + (breakdown.posts?.net ?? 0);
 
       let rangeTotal = 0;
       base.trend = (summary?.overTime || []).map((o: any) => {
@@ -168,7 +166,8 @@ export default async function (req: Request): Promise<Response> {
           net: (o.net || 0) / 100,
         };
       });
-      base.total_earnings_cents = rangeTotal || (summary?.totals?.thisMonth?.net || 0);
+      // overTime reflects the selected range; thisMonth is unrelated to it.
+      base.total_earnings_cents = rangeTotal;
     } catch (err: any) {
       base.insights_error = err.message || "Insights request failed";
     }
