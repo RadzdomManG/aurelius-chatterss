@@ -12,7 +12,7 @@
 // Capped at MAX_ITEMS per run to stay within function timeouts; re-run to
 // continue. Existing VaultFolder.approved flags are preserved across re-sync.
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
-import { getValidAccessToken, getMedia } from "../../shared/fanvue-api.ts";
+import { getValidAccessToken, getMedia, getVaultFolders, getVaultFolderMedia } from "../../shared/fanvue-api.ts";
 import { parseAccessState } from "../../shared/media-eligibility.ts";
 
 const MAX_ITEMS = 500;
@@ -72,7 +72,27 @@ export default async function (req) {
     const existingMedia = await base44.asServiceRole.entities.VaultMedia.filter({ creator_profile_id: creatorProfileId }, "created_date", 1000);
     const mediaByUuid = new Map((existingMedia || []).map((m) => [m.external_uuid, m]));
 
-    const folderCounts = {}; // total media per folder
+    // The general media feed does not include reliable vault folder membership.
+    // Read the authoritative folder list and each folder's media UUIDs first.
+    const vaultFolders = [];
+    for (let page = 1; page <= 100; page++) {
+      const result = await getVaultFolders(accessToken, page);
+      vaultFolders.push(...(result?.data || []));
+      if (!result?.pagination?.hasMore) break;
+    }
+    const folderByUuid = new Map();
+    for (const folder of vaultFolders) {
+      if (!folder?.name) continue;
+      for (let page = 1; page <= 100; page++) {
+        const result = await getVaultFolderMedia(accessToken, folder.name, page);
+        for (const item of result?.data || []) {
+          if (item?.uuid) folderByUuid.set(item.uuid, folder.name);
+        }
+        if (!result?.pagination?.hasMore) break;
+      }
+    }
+
+    const folderCounts = {}; // media seen in this sync
     const folderEligible = {}; // eligible (locked) media per folder
     let cursor = null;
     let total = 0;
@@ -89,7 +109,7 @@ export default async function (req) {
       for (const item of items) {
         const uuid = item.uuid || item.id;
         if (!uuid) continue;
-        const folderName = item.folderName || item.folder_name || "Default";
+        const folderName = folderByUuid.get(uuid) || item.folderName || item.folder_name || "Default";
         folderCounts[folderName] = (folderCounts[folderName] || 0) + 1;
         const thumb = extractThumb(item);
         const main = (Array.isArray(item.variants) ? item.variants.find((v) => v.variantType === "main")?.url : null) || thumb;
@@ -161,7 +181,10 @@ export default async function (req) {
     }
 
     // Upsert folders with counts, preserving approved flags.
-    const folderUpserts = Object.entries(folderCounts).map(([name, count]) => {
+    const reportedCounts = Object.fromEntries(vaultFolders.filter((f) => f?.name).map((f) => [f.name, f.mediaCount ?? 0]));
+    const allFolderNames = new Set([...Object.keys(reportedCounts), ...Object.keys(folderCounts)]);
+    const folderUpserts = [...allFolderNames].map((name) => {
+      const count = reportedCounts[name] ?? folderCounts[name] ?? 0;
       const existing = existingFolders.find((f) => f.folder_name === name);
       if (existing) {
         return base44.asServiceRole.entities.VaultFolder.update(existing.id, {
@@ -181,7 +204,7 @@ export default async function (req) {
 
     // Mark folders that no longer exist as media_count 0 (don't delete — keep
     // the approved flag in case the folder is temporarily empty).
-    const currentNames = new Set(Object.keys(folderCounts));
+    const currentNames = allFolderNames;
     for (const f of (existingFolders || [])) {
       if (!currentNames.has(f.folder_name)) {
         try { await base44.asServiceRole.entities.VaultFolder.update(f.id, { media_count: 0 }); } catch (e) {}
@@ -192,15 +215,15 @@ export default async function (req) {
       creator_profile_id: creatorProfileId,
       event_type: "vault.sync",
       status: "success",
-      message: `Vault sync: ${total} media (${eligibleTotal} PPV-eligible) across ${Object.keys(folderCounts).length} folder(s)`,
-      metadata: { total, eligible: eligibleTotal, folders: Object.keys(folderCounts), pages },
+      message: `Vault sync: ${total} media (${eligibleTotal} PPV-eligible) across ${allFolderNames.size} folder(s)`,
+      metadata: { total, eligible: eligibleTotal, folders: [...allFolderNames], pages },
     });
 
     return Response.json({
       success: true,
       mediaSynced: total,
       eligibleMedia: eligibleTotal,
-      folders: Object.entries(folderCounts).map(([name, count]) => ({ folder_name: name, media_count: count, eligible_count: folderEligible[name] || 0 })),
+      folders: [...allFolderNames].map((name) => ({ folder_name: name, media_count: reportedCounts[name] ?? folderCounts[name] ?? 0, eligible_count: folderEligible[name] || 0 })),
       moreAvailable: !!cursor,
     });
   } catch (error) {
