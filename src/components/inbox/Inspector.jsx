@@ -181,9 +181,9 @@ function SpendingBehavior({ fan }) {
       <div className="mb-3 grid grid-cols-2 gap-2">
         <StatBox label="Total spent" value={total} sub={d.sinceDate ? `Since ${fmtDate(d.sinceDate)}` : "—"} />
         <StatBox
-          label="Last spend"
-          value={last ? money(last.amountCents) : "$0.00"}
-          sub={last ? `${last.type.toUpperCase()} · ${relativeAge(last.at)}` : "—"}
+          label="Last purchase"
+          value={last ? money(last.amountCents) : (d.lastPurchaseAt ? fmtDate(d.lastPurchaseAt) : "—")}
+          sub={last ? `${last.type.toUpperCase()} · ${relativeAge(last.at)}` : (d.lastPurchaseAt ? relativeAge(d.lastPurchaseAt) : "—")}
         />
       </div>
 
@@ -202,7 +202,7 @@ function SpendingBehavior({ fan }) {
         <DetailLine
           label="Top purchase"
           value={top ? money(top.amountCents) : "$0.00"}
-          sub={top ? `${top.type.toUpperCase()} · ${fmtDate(top.at)}` : "—"}
+          sub={top ? (top.at ? `${top.type.toUpperCase()} · ${fmtDate(top.at)}` : top.type.toUpperCase()) : "—"}
         />
       </div>
     </Card>
