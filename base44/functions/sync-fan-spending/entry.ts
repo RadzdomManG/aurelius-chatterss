@@ -1,27 +1,15 @@
-// sync-fan-spending — pulls real per-fan spend data from Fanvue's spending
-// insights endpoint and writes total_spent_cents back onto our Fan records
-// so the Subscribers page, Inspector, and AI context all reflect real spend.
-//
-// Called from the Audience page "Sync spending" button. Iterates every Fan
-// record for the creator, calls /v1/insights/spending per fan (bounded
-// concurrency), sums transaction amounts, and bulk-updates changed records.
+// Sync Fanvue's per-fan lifetime spend into local Fan records.
+// /v1/insights/spending lists refunds and chargebacks, not purchases.
+// Fan insights supplies the fan's actual total, including reversals.
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
 import { apiCall, getValidAccessToken } from "../../shared/fanvue-api.ts";
-
-function num(v: any): number {
-  if (v == null) return 0;
-  const n = typeof v === "number" ? v : Number(String(v).replace(/[^0-9.]/g, ""));
-  return isFinite(n) ? n : 0;
-}
 
 export default async function (req: Request): Promise<Response> {
   let body: any = {};
   try { body = await req.json(); } catch (e) {}
 
   const base44 = createClientFromRequest(req);
-  try {
-    await base44.auth.me();
-  } catch (e) {
+  try { await base44.auth.me(); } catch (e) {
     return Response.json({ error: "Not authenticated" }, { status: 401 });
   }
 
@@ -31,14 +19,10 @@ export default async function (req: Request): Promise<Response> {
   }
 
   const connections = await base44.asServiceRole.entities.FanvueConnection.filter(
-    { creator_profile_id: creatorProfileId, status: "connected" },
-    "-created_date",
-    1
+    { creator_profile_id: creatorProfileId, status: "connected" }, "-created_date", 1
   );
   const connection = connections[0];
-  if (!connection) {
-    return Response.json({ error: "No connected Fanvue account" }, { status: 404 });
-  }
+  if (!connection) return Response.json({ error: "No connected Fanvue account" }, { status: 404 });
 
   const granted = connection.granted_scopes || [];
   if (!granted.includes("read:insights") || !granted.includes("read:fan")) {
@@ -49,70 +33,57 @@ export default async function (req: Request): Promise<Response> {
   }
 
   const accessToken = await getValidAccessToken(connection, base44);
-
-  // Load all Fan records for this creator.
   const fans = await base44.asServiceRole.entities.Fan.filter(
-    { creator_profile_id: creatorProfileId },
-    "-created_date",
-    500
+    { creator_profile_id: creatorProfileId }, "-created_date", 500
   );
-
-  if (!fans || fans.length === 0) {
-    return Response.json({
-      success: true,
-      fansChecked: 0,
-      fansUpdated: 0,
-      message: "No fans to sync",
-    });
+  if (!fans?.length) {
+    return Response.json({ success: true, fansChecked: 0, fansUpdated: 0, fanErrors: 0 });
   }
 
-  // Per-fan spending lookup with bounded concurrency.
-  const CONCURRENCY = 5;
-  const results: { id: string; total_spent_cents: number }[] = [];
+  const updates: { id: string; total_spent_cents: number }[] = [];
   let errors = 0;
-
-  const fetchSpend = async (fan: any): Promise<void> => {
-    const uuid = fan.external_uuid;
-    if (!uuid) return;
+  for (let i = 0; i < fans.length; i += 100) {
+    const batch = fans.slice(i, i + 100).filter((fan: any) => fan.external_uuid);
+    if (!batch.length) continue;
     try {
-      const res: any = await apiCall(
-        `/v1/insights/spending?fanUuid=${encodeURIComponent(uuid)}&size=50`,
-        accessToken
-      );
-      const items = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
-      const total = items.reduce((sum: number, t: any) => {
-        return sum + num(t.amount ?? t.price ?? t.amountCents ?? t.totalAmount ?? t.value);
-      }, 0);
-      if (total > 0 && total !== (fan.total_spent_cents || 0)) {
-        results.push({ id: fan.id, total_spent_cents: total });
+      const response: any = await apiCall("/v1/insights/fans/batch", accessToken, {
+        method: "POST",
+        body: JSON.stringify({ userUuids: batch.map((fan: any) => fan.external_uuid) }),
+      });
+      for (const fan of batch) {
+        const insight = response?.[fan.external_uuid];
+        const total = insight?.spending?.total?.netTotal;
+        if (typeof total !== "number" || !Number.isFinite(total)) {
+          errors++;
+          continue;
+        }
+        if (total !== (fan.total_spent_cents ?? 0)) {
+          updates.push({ id: fan.id, total_spent_cents: total });
+        }
       }
-    } catch (e) {
-      errors++;
-      // Continue — best-effort per fan.
+    } catch (e: any) {
+      console.error("[sync-fan-spending] batch failed:", e.message);
+      errors += batch.length;
     }
-  };
-
-  // Process in batches of CONCURRENCY.
-  for (let i = 0; i < fans.length; i += CONCURRENCY) {
-    const batch = fans.slice(i, i + CONCURRENCY);
-    await Promise.all(batch.map(fetchSpend));
   }
 
-  // Bulk update in chunks of 450.
   let updated = 0;
-  for (let i = 0; i < results.length; i += 450) {
+  for (let i = 0; i < updates.length; i += 450) {
     try {
-      await base44.asServiceRole.entities.Fan.bulkUpdate(results.slice(i, i + 450));
-      updated += Math.min(450, results.length - i);
-    } catch (e) {
-      console.error("[sync-fan-spending] bulkUpdate chunk failed:", (e as any).message);
+      const chunk = updates.slice(i, i + 450);
+      await base44.asServiceRole.entities.Fan.bulkUpdate(chunk);
+      updated += chunk.length;
+    } catch (e: any) {
+      console.error("[sync-fan-spending] bulkUpdate failed:", e.message);
+      errors += updates.slice(i, i + 450).length;
     }
   }
 
   return Response.json({
-    success: true,
+    success: errors === 0,
     fansChecked: fans.length,
     fansUpdated: updated,
     fanErrors: errors,
+    moreAvailable: fans.length === 500,
   });
 }
