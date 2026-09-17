@@ -33,8 +33,9 @@ export default function Analytics() {
         days: selectedDays,
         creatorProfileId: creatorId || null,
       });
-      if (res && res.error) throw new Error(res.error);
-      setData(res);
+      const payload = res?.data || res;
+      if (payload?.error) throw new Error(payload.error);
+      setData(payload);
     } catch (err) {
       console.error("Analytics load failed:", err);
       setError(err.message || "Failed to load analytics. Please try again.");
