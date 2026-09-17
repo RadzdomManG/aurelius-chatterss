@@ -85,7 +85,8 @@ export async function sendFanvueMessage(accessToken, userUuid, text, price = nul
   if (text) body.text = text;
   if (price) body.price = price;
   if (media?.mediaUuids?.length) body.mediaUuids = media.mediaUuids;
-  if (media?.mediaPreviewUuid) body.mediaPreviewUuid = media.mediaPreviewUuid;
+  // Full-lock policy: do not forward mediaPreviewUuid. Fanvue treats it as a free preview.
+  // All mediaUuids remain locked behind the PPV price.
   return apiCall(`/v1/chats/${userUuid}/message`, accessToken, {
     method: "POST",
     body: JSON.stringify(body),
