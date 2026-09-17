@@ -94,7 +94,8 @@ export default async function (req: Request): Promise<Response> {
 
   async function fetchInsightsWithRetry(accessToken: string): Promise<any> {
     const fanvueStart = new Date(startDate + "T00:00:00Z").toISOString();
-    const fanvueEnd = new Date(endDate + "T23:59:59Z").toISOString();
+    // Fanvue treats endDate as exclusive, so use the following midnight.
+    const fanvueEnd = new Date(new Date(endDate + "T00:00:00Z").getTime() + MS_PER_DAY).toISOString();
     const params = new URLSearchParams({ startDate: fanvueStart, endDate: fanvueEnd, granularity: "day" });
     try {
       return await apiCall(`/v1/insights/earnings/summary?${params}`, accessToken);
