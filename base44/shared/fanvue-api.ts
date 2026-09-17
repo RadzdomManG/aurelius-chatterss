@@ -107,10 +107,17 @@ export async function getMedia(accessToken, opts = {}) {
   return apiCall(`/v1/media?${params}`, accessToken);
 }
 
+export async function getVaultFolders(accessToken, page = 1, size = 50) {
+  return apiCall(`/v1/vault/folders?page=${page}&size=${size}`, accessToken);
+}
+
+export async function getVaultFolderMedia(accessToken, folderName, page = 1, size = 50) {
+  const params = new URLSearchParams({ page: String(page), size: String(size), variants: "thumbnail,main" });
+  return apiCall(`/v1/vault/folders/${encodeURIComponent(folderName)}/media?${params}`, accessToken);
+}
+
 export async function getVaultMedia(accessToken, folderName = null, size = 50) {
-  // Use /v1/media with folderName param (NOT /v1/vault/folders/{name}/media
-  // which returns lightweight objects without variant URLs).
-  return getMedia(accessToken, { folderName, size });
+  return folderName ? getVaultFolderMedia(accessToken, folderName, 1, size) : getMedia(accessToken, { size });
 }
 
 /**
