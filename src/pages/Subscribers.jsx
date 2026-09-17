@@ -66,8 +66,9 @@ export default function Subscribers() {
     try {
       setSyncing(true);
       const res = await base44.functions.invoke("sync-fan-spending", { creatorProfileId: creator.id });
-      if (res?.error) throw new Error(res.error);
-      const count = res?.fansUpdated || 0;
+      const payload = res?.data || res;
+      if (payload?.error) throw new Error(payload.error);
+      const count = payload?.fansUpdated || 0;
       toast.success(count > 0 ? `Synced ${count} fan${count === 1 ? "" : "s"}' spending from Fanvue` : "Spending synced — no new data to update");
       await reloadFans();
     } catch (e) {
