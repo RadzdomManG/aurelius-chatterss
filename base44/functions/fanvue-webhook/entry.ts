@@ -311,7 +311,7 @@ async function processFanPresenceChanged(base44: any, event: any) {
   const data = event.data || event;
   const fanUuid = data.fan?.uuid || data.user?.uuid || data.uuid;
   const creatorUuid = data.creator?.uuid;
-  const presence = String(data.presence || data.status || "").toLowerCase();
+  const presence = String(data.state || data.presence || data.status || "").toLowerCase();
   if (!fanUuid) return;
 
   // Resolve the creator this fan belongs to so the greet is scoped correctly.
@@ -343,9 +343,29 @@ async function processFanPresenceChanged(base44: any, event: any) {
   if (presence === "online") {
     // Fan came online — fire the auto-greet (full_auto gate + cooldown inside).
     try {
-      await handlePresenceOnline(base44, { creatorProfileId, fanUuid });
+      const result = await handlePresenceOnline(base44, { creatorProfileId, fanUuid });
+      if (result?.skipped) {
+        try {
+          await base44.asServiceRole.entities.ActivityLog.create({
+            creator_profile_id: creatorProfileId,
+            event_type: "ai.presence_greet_skipped",
+            status: "info",
+            message: `Presence greet skipped: ${result.skipped}`,
+            metadata: { fanUuid, reason: result.skipped, error: result.error || null },
+          });
+        } catch (e) {}
+      }
     } catch (e: any) {
       console.error("[webhook] presence greet failed:", e.message);
+      try {
+        await base44.asServiceRole.entities.ActivityLog.create({
+          creator_profile_id: creatorProfileId,
+          event_type: "ai.presence_greet_failed",
+          status: "error",
+          message: `Presence greet failed: ${e.message}`,
+          metadata: { fanUuid },
+        });
+      } catch (logError) {}
     }
   } else if (presence === "offline") {
     try {
