@@ -334,7 +334,7 @@ async function processFanPresenceChanged(base44: any, event: any) {
       event_type: "fan.presence_changed",
       status: "info",
       message: `Fan ${fanUuid} presence: ${presence || "unknown"}`,
-      metadata: { presence, creatorProfileId },
+      metadata: { presence, creatorProfileId, creatorUuid: creatorUuid || null, parser: "presence-v2" },
     });
   } catch (e) {}
 
