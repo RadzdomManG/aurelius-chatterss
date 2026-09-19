@@ -311,7 +311,7 @@ async function processFanPresenceChanged(base44: any, event: any) {
   const data = event.data || event;
   const fanUuid = data.fan?.uuid || data.user?.uuid || data.uuid;
   const creatorUuid = data.creator?.uuid;
-  const presence = String(data.state || data.presence || data.status || "").toLowerCase();
+  const presence = String(data.state ?? data.presence ?? data.status ?? event.state ?? "").trim().toLowerCase();
   if (!fanUuid) return;
 
   // Resolve the creator this fan belongs to so the greet is scoped correctly.
