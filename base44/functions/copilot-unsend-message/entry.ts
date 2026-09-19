@@ -19,19 +19,23 @@ export default async function (req: Request): Promise<Response> {
       return Response.json({ error: "messageId or messageUuid is required" }, { status: 400 });
     }
 
-    // Resolve the message record if only messageId was given
     let msgRecord: any = null;
     if (messageId) {
-      try { msgRecord = await base44.asServiceRole.entities.Message.get(messageId); } catch (e) {}
+      try { msgRecord = await base44.entities.Message.get(messageId); } catch (e) {}
+    } else if (messageUuid && conversationId) {
+      const matches = await base44.entities.Message.filter({ conversation_id: conversationId, external_uuid: messageUuid }, "-created_date", 1);
+      msgRecord = matches[0];
     }
-    let msgUuid = messageUuid || msgRecord?.external_uuid;
-    let convId = conversationId || msgRecord?.conversation_id;
-
-    if (!msgUuid) return Response.json({ error: "Could not resolve the Fanvue message UUID" }, { status: 400 });
-    if (!convId) return Response.json({ error: "conversationId is required (or pass messageId)" }, { status: 400 });
-
-    const conversation = await base44.asServiceRole.entities.Conversation.get(convId);
-    if (!conversation) return Response.json({ error: "Conversation not found" }, { status: 404 });
+    if (!msgRecord) return Response.json({ error: "Message not found or not accessible" }, { status: 404 });
+    if (conversationId && msgRecord.conversation_id !== conversationId) return Response.json({ error: "Message does not belong to this conversation" }, { status: 400 });
+    if (messageUuid && msgRecord.external_uuid !== messageUuid) return Response.json({ error: "Message UUID does not match" }, { status: 400 });
+    if (msgRecord.sender_type !== "creator" && msgRecord.sender_type !== "ai") return Response.json({ error: "Only creator or AI sent messages can be unsent" }, { status: 403 });
+    if (!msgRecord.external_uuid) return Response.json({ error: "This message has no Fanvue ID to unsend" }, { status: 400 });
+    if (msgRecord.unsend_status === "unsent") return Response.json({ success: true, alreadyUnsent: true });
+    const convId = msgRecord.conversation_id;
+    const msgUuid = msgRecord.external_uuid;
+    const conversation = await base44.entities.Conversation.get(convId);
+    if (!conversation || (msgRecord.creator_profile_id && msgRecord.creator_profile_id !== conversation.creator_profile_id)) return Response.json({ error: "Conversation not found or ownership mismatch" }, { status: 404 });
 
     const fan = await base44.asServiceRole.entities.Fan.get(conversation.fan_id);
     if (!fan?.external_uuid) return Response.json({ error: "Fan not found or missing external UUID" }, { status: 404 });
