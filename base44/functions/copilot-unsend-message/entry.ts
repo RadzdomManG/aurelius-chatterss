@@ -49,7 +49,7 @@ export default async function (req: Request): Promise<Response> {
     const accessToken = await getValidAccessToken(connection, base44);
 
     const deletion = await deleteMessage(accessToken, fan.external_uuid, msgUuid);
-    if (!deletion.ok && deletion.status !== 404) {
+    if (!deletion.ok) {
       return Response.json({ error: "Fanvue did not unsend this message", fanvueStatus: deletion.status, detail: deletion.body }, { status: 502 });
     }
     await base44.asServiceRole.entities.Message.update(msgRecord.id, { unsend_status: "unsent", pending_unsend_at: null });
