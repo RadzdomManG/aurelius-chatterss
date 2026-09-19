@@ -102,9 +102,27 @@ export default async function (req: Request): Promise<Response> {
         }
       }
       try {
-        await sendFanvueMessage(accessToken, fanUuid, message || null, priceCents || null, media);
+        const sent = await sendFanvueMessage(accessToken, fanUuid, message || null, priceCents || null, media);
+        const messageUuid = sent?.messageUuid || sent?.uuid || sent?.data?.uuid || sent?.message?.uuid || null;
+        if (fan?.id) {
+          const conversations = await base44.asServiceRole.entities.Conversation.filter({ creator_profile_id: creatorProfileId, fan_id: fan.id }, "-created_date", 1);
+          if (conversations[0]) {
+            await base44.asServiceRole.entities.Message.create({
+              organization_id: creator?.organization_id,
+              creator_profile_id: creatorProfileId,
+              conversation_id: conversations[0].id,
+              external_uuid: messageUuid,
+              sender_type: "creator",
+              source: "ai",
+              body: message || "",
+              media: mediaUuids || [],
+              ppv_cents: priceCents || null,
+              send_status: "sent",
+            });
+          }
+        }
         messagedCount++;
-        results.push({ fanUuid, sent: true });
+        results.push({ fanUuid, sent: true, messageUuid });
         // Update the cooldown timestamp on the local fan record
         if (fan?.id) {
           try {
