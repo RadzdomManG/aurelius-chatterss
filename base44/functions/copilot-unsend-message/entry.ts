@@ -48,25 +48,11 @@ export default async function (req: Request): Promise<Response> {
 
     const accessToken = await getValidAccessToken(connection, base44);
 
-    // Delete the message on Fanvue
-    await apiCall(
-      `/v1/chats/${encodeURIComponent(fan.external_uuid)}/messages/${encodeURIComponent(msgUuid)}`,
-      accessToken,
-      { method: "DELETE" }
-    );
-
-    // Update the local message record
-    const localId = messageId || msgRecord?.id;
-    if (localId) {
-      try {
-        await base44.asServiceRole.entities.Message.update(localId, { unsend_status: "unsent", send_status: "failed" });
-      } catch (e) {}
-    } else {
-      const msgs = await base44.asServiceRole.entities.Message.filter({ external_uuid: msgUuid }, "-created_date", 1);
-      if (msgs[0]) {
-        await base44.asServiceRole.entities.Message.update(msgs[0].id, { unsend_status: "unsent", send_status: "failed" });
-      }
+    const deletion = await deleteMessage(accessToken, fan.external_uuid, msgUuid);
+    if (!deletion.ok && deletion.status !== 404) {
+      return Response.json({ error: "Fanvue did not unsend this message", fanvueStatus: deletion.status, detail: deletion.body }, { status: 502 });
     }
+    await base44.asServiceRole.entities.Message.update(msgRecord.id, { unsend_status: "unsent", pending_unsend_at: null });
 
     await base44.asServiceRole.entities.ActivityLog.create({
       creator_profile_id: conversation.creator_profile_id,
