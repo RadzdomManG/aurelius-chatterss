@@ -105,6 +105,7 @@ export default async function (req: Request): Promise<Response> {
         const sent = await sendFanvueMessage(accessToken, fanUuid, message || null, priceCents || null, media);
         const messageUuid = sent?.messageUuid || sent?.uuid || sent?.data?.uuid || sent?.message?.uuid || null;
         if (fan?.id) {
+          try {
           const conversations = await base44.asServiceRole.entities.Conversation.filter({ creator_profile_id: creatorProfileId, fan_id: fan.id }, "-created_date", 1);
           if (conversations[0]) {
             await base44.asServiceRole.entities.Message.create({
@@ -120,6 +121,7 @@ export default async function (req: Request): Promise<Response> {
               send_status: "sent",
             });
           }
+          } catch (logError) { console.error("[message-online-fans] sent message could not be recorded", logError); }
         }
         messagedCount++;
         results.push({ fanUuid, sent: true, messageUuid });
