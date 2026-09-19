@@ -245,7 +245,7 @@ export async function sweepPendingUnsends(base44: any): Promise<{ unsent: number
         if (!fan || !connection || !m.external_uuid) { await base44.asServiceRole.entities.Message.update(m.id, { unsend_status: "sent", pending_unsend_at: null }); failed++; continue; }
         const accessToken = await getValidAccessToken(connection, base44);
         const del = await deleteMessage(accessToken, fan.external_uuid, m.external_uuid);
-        if (del.ok || del.status === 404) {
+        if (del.ok) {
           await base44.asServiceRole.entities.Message.update(m.id, { unsend_status: "unsent" });
           await base44.asServiceRole.entities.Message.delete(m.id);
           await base44.asServiceRole.entities.ActivityLog.create({
