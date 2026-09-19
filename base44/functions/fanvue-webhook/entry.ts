@@ -322,7 +322,7 @@ async function processFanPresenceChanged(base44: any, event: any) {
       if (conns[0]) creatorProfileId = conns[0].creator_profile_id;
     } catch (e) {}
   }
-  if (!creatorProfileId) {
+  if (!creatorProfileId && !creatorUuid) {
     try {
       const fans = await base44.asServiceRole.entities.Fan.filter({ external_uuid: fanUuid }, "-created_date", 1);
       if (fans[0]) creatorProfileId = fans[0].creator_profile_id;
