@@ -2,7 +2,7 @@
 // Resolves the fan UUID from the conversation, calls the Fanvue deleteMessage
 // endpoint, and updates the local Message record to reflect the unsend.
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.48";
-import { getValidAccessToken, apiCall } from "../../shared/fanvue-api.ts";
+import { getValidAccessToken, deleteMessage } from "../../shared/fanvue-api.ts";
 
 export default async function (req: Request): Promise<Response> {
   let body: any = {};
