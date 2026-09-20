@@ -75,7 +75,8 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = nul
   };
 
   let res;
-  const timeoutMs = isCustom ? 180000 : 25000;
+  const configuredTimeout = Number(getSecret("AI_TIMEOUT_MS"));
+  const timeoutMs = isCustom ? (Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 180000) : 25000;
   for (let attempt = 0; attempt < 2; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
