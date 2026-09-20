@@ -78,7 +78,7 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = nul
     ? `\n\nRespond ONLY with a valid JSON object containing these keys: ${schemaKeys.join(", ")}. No markdown, no code fences, just raw JSON.`
     : "";
 
-  const body = {
+  const body: any = {
     model: selectedModel,
     messages: [
       { role: "system", content: systemPrompt },
@@ -86,8 +86,14 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = nul
     ],
     temperature: 0.75,
     max_tokens: 1500,
-    response_format: { type: "json_object" },
   };
+
+  // llama.cpp and some OpenAI-compatible local servers can return empty JSON
+  // when forced into json_object mode. For the local Rei provider, let the
+  // model answer naturally and normalize plain text in parseJsonContent().
+  if (!isCustom) {
+    body.response_format = { type: "json_object" };
+  }
 
   let res;
   const configuredTimeout = Number(getSecret("AI_TIMEOUT_MS"));
