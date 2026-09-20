@@ -1,56 +1,95 @@
 import { secrets } from "base44:runtime";
 
 const XAI_API_URL = "https://api.x.ai/v1/chat/completions";
+const DEFAULT_XAI_MODEL = "grok-3-latest";
+const DEFAULT_LOCAL_MODEL = "rei-local";
+
+function getSecret(name: string): string {
+  try {
+    return String(secrets.get(name) || "").trim();
+  } catch (e) {
+    return "";
+  }
+}
+
+function completionUrl(baseUrl: string): string {
+  const clean = baseUrl.replace(/\/+$/, "");
+  if (clean.endsWith("/chat/completions")) return clean;
+  if (clean.endsWith("/v1")) return `${clean}/chat/completions`;
+  return `${clean}/v1/chat/completions`;
+}
+
+function parseJsonContent(content: string) {
+  const cleaned = String(content || "")
+    .replace(/```json\n?/g, "")
+    .replace(/```\n?/g, "")
+    .trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try { return JSON.parse(match[0]); } catch (inner) {}
+    }
+    return { reply: cleaned, confidence: 0.5, intent: "conversation", sentiment: "neutral", _parseError: true };
+  }
+}
+
+export function isCustomAIConfigured() {
+  return !!getSecret("AI_API_BASE_URL");
+}
 
 /**
- * Calls xAI Grok directly with the XAI_API_KEY secret.
- * Returns parsed JSON matching the requested schema.
- * Falls back gracefully on error.
+ * Calls the configured OpenAI-compatible chat provider.
+ *
+ * Secrets:
+ * - AI_API_BASE_URL: optional. Use this to replace Grok with a local/tunnel URL, e.g. https://your-tunnel.trycloudflare.com/v1
+ * - AI_MODEL: optional. Defaults to rei-local when AI_API_BASE_URL is set, otherwise grok-3-latest.
+ * - AI_API_KEY: optional bearer token for the custom provider.
+ * - XAI_API_KEY: fallback key for xAI when AI_API_BASE_URL is not set.
  */
-const DEFAULT_MODEL = "grok-3-latest";
+export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = null) {
+  const customBaseUrl = getSecret("AI_API_BASE_URL");
+  const isCustom = !!customBaseUrl;
+  const apiUrl = isCustom ? completionUrl(customBaseUrl) : XAI_API_URL;
+  const apiKey = isCustom ? getSecret("AI_API_KEY") : getSecret("XAI_API_KEY");
+  const selectedModel = model || getSecret("AI_MODEL") || (isCustom ? DEFAULT_LOCAL_MODEL : DEFAULT_XAI_MODEL);
 
-export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = DEFAULT_MODEL) {
-  const apiKey = secrets.get("XAI_API_KEY");
-  if (!apiKey) throw new Error("XAI_API_KEY secret is not set");
+  if (!isCustom && !apiKey) throw new Error("XAI_API_KEY secret is not set");
 
-  // Build a concise schema instruction for Grok
   const schemaKeys = jsonSchema?.properties ? Object.keys(jsonSchema.properties) : [];
   const schemaHint = schemaKeys.length > 0
-    ? `\n\nRespond ONLY with a JSON object containing these keys: ${schemaKeys.join(", ")}. No markdown, no code fences, just raw JSON.`
+    ? `\n\nRespond ONLY with a valid JSON object containing these keys: ${schemaKeys.join(", ")}. No markdown, no code fences, just raw JSON.`
     : "";
 
   const body = {
-    model,
+    model: selectedModel,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt + schemaHint },
     ],
-    temperature: 0.7,
+    temperature: 0.75,
     max_tokens: 1500,
     response_format: { type: "json_object" },
   };
 
-  // Hard timeout + 5xx retry: a single Grok 5xx must not fall back to a
-  // different model (InvokeLLM) — that breaks persona consistency and costs
-  // extra credits. Retry once on a transient server error instead.
   let res;
-  const timeoutMs = 25000;
+  const timeoutMs = isCustom ? 60000 : 25000;
   for (let attempt = 0; attempt < 2; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      res = await fetch(XAI_API_URL, {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      res = await fetch(apiUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
+        headers,
         body: JSON.stringify(body),
         signal: controller.signal,
       });
     } catch (err: any) {
       clearTimeout(timeout);
-      if (err?.name === "AbortError") throw new Error(`xAI API timeout (>${timeoutMs / 1000}s)`);
+      if (err?.name === "AbortError") throw new Error(`${isCustom ? "Custom AI" : "xAI"} API timeout (>${timeoutMs / 1000}s)`);
       throw err;
     }
     clearTimeout(timeout);
@@ -60,19 +99,10 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = DEF
 
   if (!res || !res.ok) {
     const errText = await res?.text().catch(() => res?.statusText || "no response");
-    throw new Error(`xAI API ${res?.status || "none"}: ${errText.slice(0, 300)}`);
+    throw new Error(`${isCustom ? "Custom AI" : "xAI"} API ${res?.status || "none"}: ${errText.slice(0, 300)}`);
   }
 
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content || "";
-
-  // Parse JSON from the response
-  try {
-    // Strip any accidental markdown fences
-    const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    return JSON.parse(cleaned);
-  } catch (e) {
-    // If parsing fails, return the raw content in a fallback shape
-    return { reply: content, confidence: 0.5, intent: "conversation", sentiment: "neutral", _parseError: true };
-  }
+  return parseJsonContent(content);
 }
