@@ -1,4 +1,5 @@
 import { getValidAccessToken, sendFanvueMessage } from "./fanvue-api.ts";
+import { sendWithRetry } from "./send-helpers.ts";
 import { callGrok, isCustomAIConfigured } from "./grok-client.ts";
 import { isPaused } from "./app-config.ts";
 import { toCode } from "./error-catalog.ts";
@@ -42,10 +43,13 @@ import { checkAiMessageLimit, incrementUsage } from "./plan-limits.ts";
 
 // ---- SINGLE CANONICAL AUTOMATION MODE RESOLVER ----
 export function resolveAutomationMode(creator: any, conversation: any, settings: any): "STOPPED" | "DRAFT" | "AUTO" {
-  // automation_mode (per-fan override → global creator mode) is the single
-  // source of truth. The old `settings.enabled` gate is removed so clicking
-  // Off/Draft/Auto takes effect immediately with no hidden second switch.
-  const mode = conversation?.automation_mode_override || creator?.automation_mode || "off";
+  // Conversation override is only honored when explicitly set to off/draft/full_auto.
+  // Empty/stale values follow the creator's global automation mode so newly synced
+  // Fanvue conversations keep replying by default.
+  const rawOverride = conversation?.automation_mode_override;
+  const mode = ["off", "draft", "full_auto"].includes(rawOverride)
+    ? rawOverride
+    : (creator?.automation_mode || "off");
   if (mode === "off") return "STOPPED";
   if (mode === "draft") return "DRAFT";
   if (mode === "full_auto") return "AUTO";
@@ -966,7 +970,30 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
         const isLast = i === replies.length - 1;
         const bubblePpv = isLast ? ppvCents : null;
         const bubbleMedia = isLast ? mediaForSend : null;
-        const sendResult = await sendWithRetry(accessToken, fan.external_uuid, replies[i], bubblePpv, bubbleMedia);
+        const candidateUserUuids = Array.from(new Set([
+          fan?.external_uuid,
+          conversation?.external_chat_uuid,
+        ].filter(Boolean).map((v: any) => String(v).trim()).filter(Boolean)));
+        let sendResult: any = null;
+        let sendError: any = null;
+        for (const candidateUserUuid of candidateUserUuids) {
+          try {
+            sendResult = await sendWithRetry(accessToken, candidateUserUuid, replies[i], bubblePpv, bubbleMedia);
+            if (candidateUserUuid !== fan.external_uuid) {
+              try {
+                await base44.asServiceRole.entities.Fan.update(fan.id, { external_uuid: candidateUserUuid });
+                fan.external_uuid = candidateUserUuid;
+              } catch (e) {}
+            }
+            sendError = null;
+            break;
+          } catch (err: any) {
+            sendError = err;
+            const msg = err?.message || "";
+            if (!/Invalid user UUID|404|not found/i.test(msg)) throw err;
+          }
+        }
+        if (!sendResult && sendError) throw sendError;
         const su = sendResult?.messageUuid || sendResult?.uuid || sendResult?.data?.uuid || sendResult?.message?.uuid || sendResult?.id || null;
         if (isLast && su) lastSentMsgUuid = su;
         // Dedup by Fanvue message UUID. If the send response carried no UUID, skip
