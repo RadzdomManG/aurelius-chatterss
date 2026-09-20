@@ -1,5 +1,5 @@
 import { getValidAccessToken, sendFanvueMessage } from "./fanvue-api.ts";
-import { callGrok } from "./grok-client.ts";
+import { callGrok, isCustomAIConfigured } from "./grok-client.ts";
 import { isPaused } from "./app-config.ts";
 import { toCode } from "./error-catalog.ts";
 import { PRICE_FLOOR_CENTS, PRICE_CEILING_CENTS, clampPersonaPrice } from "./ppv-ladder.ts";
@@ -747,6 +747,10 @@ Analyze the conversation, then write your replies as 1-3 short bubbles (no line 
     try {
       aiResult = await callGrok(systemPrompt, userPrompt, AI_JSON_SCHEMA);
     } catch (grokErr) {
+      if (isCustomAIConfigured()) {
+        console.error("Custom AI provider failed:", grokErr.message);
+        throw grokErr;
+      }
       console.error("Grok call failed, falling back to InvokeLLM:", grokErr.message);
       aiResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: `${systemPrompt}\n\n${userPrompt}`,
