@@ -18,11 +18,6 @@ export async function generateDraft(params) {
     };
   }
 
-  const conversationContext = (recentMessages || [])
-    .slice(-15)
-    .map((m) => `${m.sender === "fan" ? "Fan" : "Creator"}: ${m.text || m.body || ""}`)
-    .join("\n");
-
   try {
     const res = await base44.functions.invoke("generate-ai-reply", {
       personaInstructions,
@@ -48,10 +43,6 @@ export async function generateDraft(params) {
 
 export async function generatePlaygroundReply(params) {
   const { personaInstructions, fanMemory, recentMessages, newMessage, fanDisplayName } = params;
-
-  const conversationContext = (recentMessages || [])
-    .map((m) => `${m.sender === "fan" ? "Fan" : "Creator"}: ${m.text || m.body || ""}`)
-    .join("\n");
 
   try {
     const res = await base44.functions.invoke("generate-ai-reply", {
