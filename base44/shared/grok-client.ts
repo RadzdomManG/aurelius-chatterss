@@ -46,6 +46,7 @@ export function isCustomAIConfigured() {
  * - AI_API_BASE_URL: optional. Use this to replace Grok with a local/tunnel URL, e.g. https://your-tunnel.trycloudflare.com/v1
  * - AI_MODEL: optional. Defaults to rei-local when AI_API_BASE_URL is set, otherwise grok-3-latest.
  * - AI_API_KEY: optional bearer token for the custom provider.
+ * - AI_TIMEOUT_MS: optional timeout for the custom provider. Default is 180000.
  * - XAI_API_KEY: fallback key for xAI when AI_API_BASE_URL is not set.
  */
 export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = null) {
@@ -74,7 +75,7 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = nul
   };
 
   let res;
-  const timeoutMs = isCustom ? 60000 : 25000;
+  const timeoutMs = isCustom ? 180000 : 25000;
   for (let attempt = 0; attempt < 2; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
