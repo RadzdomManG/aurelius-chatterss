@@ -19,7 +19,7 @@ function completionUrl(baseUrl: string): string {
   return `${clean}/v1/chat/completions`;
 }
 
-function parseJsonContent(content: string) {
+function parseJsonContent(content: string, jsonSchema: any = null) {
   const cleaned = String(content || "")
     .replace(/```json\n?/g, "")
     .replace(/```\n?/g, "")
@@ -31,7 +31,22 @@ function parseJsonContent(content: string) {
     if (match) {
       try { return JSON.parse(match[0]); } catch (inner) {}
     }
-    return { reply: cleaned, confidence: 0.5, intent: "conversation", sentiment: "neutral", _parseError: true };
+    const props = jsonSchema?.properties || {};
+    if (props.replies) {
+      return {
+        replies: cleaned ? [cleaned] : [],
+        confidence: 0.65,
+        intent: "conversation",
+        sentiment: "neutral",
+        suggested_ppv_cents: null,
+        ppv_reason: null,
+        chosen_set_id: null,
+        chosen_folder: null,
+        memory_updates: [],
+        _parseError: true,
+      };
+    }
+    return { reply: cleaned, confidence: 0.65, intent: "conversation", sentiment: "neutral", memoryUpdates: [], _parseError: true };
   }
 }
 
@@ -106,5 +121,5 @@ export async function callGrok(systemPrompt, userPrompt, jsonSchema, model = nul
 
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content || "";
-  return parseJsonContent(content);
+  return parseJsonContent(content, jsonSchema);
 }
